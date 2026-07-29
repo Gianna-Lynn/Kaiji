@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from typing import Protocol
 
 from kaiji.models import (
@@ -34,6 +35,7 @@ class AgentRuntime:
         messages = [Message(role="user", content=question)]
         successful_results = []
         trace = []
+        seen_calls: set[str] = set()
 
         for step in range(1, self._max_steps + 1):
             action = self._decision_provider.decide(messages)
@@ -63,6 +65,31 @@ class AgentRuntime:
                 )
 
             assert action.tool_call is not None
+            signature = json.dumps(
+                {
+                    "name": action.tool_call.name,
+                    "arguments": action.tool_call.arguments,
+                },
+                sort_keys=True,
+                ensure_ascii=False,
+            )
+            if signature in seen_calls:
+                trace.append(
+                    TraceEvent(
+                        step=step,
+                        event="stop",
+                        data={"reason": StopReason.DUPLICATE_CALL},
+                    )
+                )
+                return RunResult(
+                    answer=None,
+                    stop_reason=StopReason.DUPLICATE_CALL,
+                    steps=step,
+                    messages=messages,
+                    successful_tool_results=successful_results,
+                    trace=trace,
+                )
+            seen_calls.add(signature)
             result = self._executor.execute(action.tool_call)
             trace.append(
                 TraceEvent(

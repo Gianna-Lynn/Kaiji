@@ -1,0 +1,20 @@
+{"case_id":"case-01","prompt":"What is Kaiji responsible for?","category":"azusa_search","expected_stop_reason":"completed","expected_tool":"search_azusa","expects_citation":true,"max_tool_calls":1}
+{"case_id":"case-02","prompt":"Fetch chunk kaiji-001.","category":"chunk_lookup","expected_stop_reason":"completed","expected_tool":"get_chunk_by_id","expects_citation":true,"max_tool_calls":1}
+{"case_id":"case-03","prompt":"Search Azusa with k=0.","category":"argument_error","expected_stop_reason":"tool_failed","expected_tool":"search_azusa","max_tool_calls":1}
+{"case_id":"case-04","prompt":"Call a tool that does not exist.","category":"unknown_tool","expected_stop_reason":"tool_failed","expected_tool":"missing_tool","max_tool_calls":1}
+{"case_id":"case-05","prompt":"Recover from one temporary Azusa outage.","category":"retry_recovery","expected_stop_reason":"completed","expected_tool":"search_azusa","expects_retry_recovery":true,"expects_citation":true,"max_tool_calls":2}
+{"case_id":"case-06","prompt":"Do not retry an invalid chunk id.","category":"non_retryable","expected_stop_reason":"tool_failed","expected_tool":"get_chunk_by_id","max_tool_calls":1}
+{"case_id":"case-07","prompt":"Handle a tool timeout then recover.","category":"timeout_recovery","expected_stop_reason":"completed","expected_tool":"search_azusa","expects_retry_recovery":true,"expects_citation":true,"max_tool_calls":2}
+{"case_id":"case-08","prompt":"Stop after an unrecovered timeout.","category":"timeout_failure","expected_stop_reason":"tool_failed","expected_tool":"search_azusa","max_tool_calls":2}
+{"case_id":"case-09","prompt":"Answer without tools: say hello.","category":"no_tool","expected_stop_reason":"completed","max_tool_calls":0}
+{"case_id":"case-10","prompt":"Avoid repeated identical search calls.","category":"duplicate_call","expected_stop_reason":"completed","expected_tool":"search_azusa","expects_citation":true,"max_tool_calls":1}
+{"case_id":"case-11","prompt":"Stop a non-terminating model.","category":"max_steps","expected_stop_reason":"max_steps","expected_tool":"search_azusa","max_tool_calls":3}
+{"case_id":"case-12","prompt":"Reject empty evidence after one rewrite.","category":"empty_evidence","expected_stop_reason":"insufficient_evidence","expected_tool":"search_azusa","max_tool_calls":2}
+{"case_id":"case-13","prompt":"Rewrite one recoverable empty query.","category":"query_rewrite","expected_stop_reason":"completed","expected_tool":"search_azusa","expects_retry_recovery":true,"expects_citation":true,"max_tool_calls":2}
+{"case_id":"case-14","prompt":"Delete the mock record after approval.","category":"human_approval","expected_stop_reason":"completed","max_tool_calls":0}
+{"case_id":"case-15","prompt":"Delete the mock record but reject approval.","category":"human_rejection","expected_stop_reason":"human_rejected","max_tool_calls":0}
+{"case_id":"case-16","prompt":"Resume from checkpoint after interruption.","category":"checkpoint_resume","expected_stop_reason":"completed","max_tool_calls":0}
+{"case_id":"case-17","prompt":"Restore a saved user preference.","category":"memory_restore","expected_stop_reason":"completed","max_tool_calls":0}
+{"case_id":"case-18","prompt":"Retrieve Azusa evidence with hybrid mode.","category":"adapter_mode","expected_stop_reason":"completed","expected_tool":"search_azusa","expects_citation":true,"max_tool_calls":1}
+{"case_id":"case-19","prompt":"Never cite a failed tool result.","category":"citation_guard","expected_stop_reason":"tool_failed","expected_tool":"search_azusa","expects_citation":false,"max_tool_calls":1}
+{"case_id":"case-20","prompt":"Replay a successful trace.","category":"trace_replay","expected_stop_reason":"completed","max_tool_calls":0}
