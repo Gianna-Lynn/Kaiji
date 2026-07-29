@@ -28,6 +28,7 @@ $py = 'D:\Chuo_Data\conda_envs\ChuoEnv\python.exe'
 | 9 | Memory Store 与会话恢复 | `pytest tests/test_persistence.py -k memory` |
 | 10 | Trace 保存与重放 | `pytest tests/test_tracing.py` |
 | 11 | 20-case Eval 指标聚合 | `pytest tests/test_evaluation.py` |
+| 12 | Azusa TODO 分支完成后的真实 HTTP 对接 | `pytest tests/test_azusa_live_integration.py` |
 
 每完成一行，该行测试即可独立转绿。最后再执行全量 `pytest`、`course_demo` 和
 `eval_demo`。如果卡住，可用下列命令只查看标准答案差异，避免整分支切换：
@@ -35,6 +36,27 @@ $py = 'D:\Chuo_Data\conda_envs\ChuoEnv\python.exe'
 ```powershell
 git diff main..solution/kaiji-v0-full-course -- src/kaiji/<对应文件>.py
 ```
+
+## TODO 12：跨仓库验收
+
+先在 Azusa 的 `todo/kaiji-semantic-gateway` 完成
+`rag/docs/kaiji_gateway_assignment.md`，使其 5 个网关测试全绿，然后启动：
+
+```powershell
+Set-Location F:\Repositories\Azusa\rag
+& $py run_kaiji_gateway.py --port 3010
+```
+
+在 Kaiji main 的另一个终端运行：
+
+```powershell
+Set-Location F:\Repositories\Kaiji
+$env:AZUSA_GATEWAY_URL = 'http://127.0.0.1:3010'
+& $py -m pytest tests/test_azusa_live_integration.py
+```
+
+验收必须使用 Azusa 现有 `embedding.jsonl` 和 BM25：先搜索 stromules，再按命中的
+chunk id 回读正文并确认一致。未设置环境变量时该测试自动跳过，不阻塞前 11 课。
 
 ## 1. 原生 Tool Agent
 

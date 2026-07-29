@@ -40,5 +40,9 @@ Kaiji 不导入 `F:\Repositories\Azusa` 的 Python 或 Rust 内部实现。当�
 encoder 和 chunk text resolver，并且只支持 `hnsw`。
 
 任务书约定的 `search_azusa(query, k, mode)` 与
-`get_chunk_by_id(chunk_id)` 被定义为稳定的 `AzusaAdapter` 协议。未来 Azusa 增加薄
-HTTP 网关时，Kaiji 只替换 adapter，不修改 Runtime 或 Workflow。
+`get_chunk_by_id(chunk_id)` 被定义为稳定的 `AzusaAdapter` 协议。Azusa 的
+`solution/kaiji-semantic-gateway` 已提供薄 HTTP 网关；对应练习位于
+`todo/kaiji-semantic-gateway`。Kaiji 只依赖 adapter，不导入 Azusa 内部实现。
+
+完成 Kaiji TODO 7 和 Azusa 网关 TODO 后，使用 `test_azusa_live_integration.py`
+验证真实 `query → BM25 hits → chunk_id → 完整 chunk` 链路。
