@@ -13,6 +13,24 @@ $py = 'D:\Chuo_Data\conda_envs\ChuoEnv\python.exe'
 
 全部测试与三个命令均不需要 API key、GPU 或正在运行的 Azusa。
 
+真实 Azusa HTTP 回归是单独的可选测试。先在 Azusa 正确答案分支启动 3010 网关：
+
+```powershell
+Set-Location F:\Repositories\Azusa\rag
+& $py run_kaiji_gateway.py --port 3010
+```
+
+再在 Kaiji 正确答案分支运行：
+
+```powershell
+Set-Location F:\Repositories\Kaiji
+$env:AZUSA_GATEWAY_URL = 'http://127.0.0.1:3010'
+& $py -m pytest tests/test_azusa_live_integration.py
+```
+
+该回归使用 Azusa 现有 `embedding.jsonl` 和真实 BM25 检索，随后按返回的 chunk id 再取
+完整证据，验证两次响应正文一致。
+
 ## 1. 原生 Tool Agent
 
 代码：`models.py`、`tools.py`、`runtime.py`、`demo.py`。

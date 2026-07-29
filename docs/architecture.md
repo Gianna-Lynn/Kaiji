@@ -42,3 +42,8 @@ encoder 和 chunk text resolver，并且只支持 `hnsw`。
 任务书约定的 `search_azusa(query, k, mode)` 与
 `get_chunk_by_id(chunk_id)` 被定义为稳定的 `AzusaAdapter` 协议。未来 Azusa 增加薄
 HTTP 网关时，Kaiji 只替换 adapter，不修改 Runtime 或 Workflow。
+
+Azusa 的 `solution/kaiji-semantic-gateway` 分支现已实现该薄网关，默认监听
+`http://127.0.0.1:3010`。Kaiji 的 `test_azusa_live_integration.py` 使用真实 BM25
+完成 `query → hits → chunk_id → 完整 chunk` 跨仓库回归；未设置
+`AZUSA_GATEWAY_URL` 时该测试跳过，不阻塞离线课程。
