@@ -1,3 +1,5 @@
+import time
+
 from pydantic import BaseModel
 
 from kaiji.demo import DiscountArgs, DiscountResult
@@ -144,3 +146,34 @@ def test_invalid_tool_output_never_becomes_success() -> None:
     assert not result.ok
     assert result.error is not None
     assert result.error.code == ToolErrorCode.INVALID_RESULT
+
+
+def test_timeout_is_structured_and_respects_retry_policy() -> None:
+    def slow_handler(args: DiscountArgs) -> dict:
+        time.sleep(0.05)
+        return {"final_price": args.price}
+
+    executor = executor_for(
+        ToolDefinition(
+            name="slow",
+            description="test",
+            arguments_model=DiscountArgs,
+            result_model=DiscountResult,
+            handler=slow_handler,
+            timeout_seconds=0.005,
+        )
+    )
+
+    result = executor.execute(
+        ToolCall(
+            call_id="6",
+            name="slow",
+            arguments={"price": 10, "percent": 0},
+        )
+    )
+
+    assert not result.ok
+    assert result.attempts == 1
+    assert result.error is not None
+    assert result.error.code == ToolErrorCode.TIMEOUT
+    assert result.error.retryable

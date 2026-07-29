@@ -18,6 +18,9 @@ class StopReason(StrEnum):
     COMPLETED = "completed"
     TOOL_FAILED = "tool_failed"
     MAX_STEPS = "max_steps"
+    HUMAN_REJECTED = "human_rejected"
+    INSUFFICIENT_EVIDENCE = "insufficient_evidence"
+    DUPLICATE_CALL = "duplicate_call"
 
 
 class ToolCall(BaseModel):

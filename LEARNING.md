@@ -1,13 +1,14 @@
 # Kaiji 原生 Agent v0：第一课
 
-本课只学习原生 Tool Loop，不引入 LangChain 或 LangGraph。标准答案位于
-`solution/native-agent-v0-tool-loop` 分支；请先在 `main` 独立完成，再对照答案。
+本文件是第一课的详细说明。完整 11 课路线见 `docs/curriculum.md`；完整标准答案位于
+`solution/kaiji-v0-full-course`，第一课的独立答案仍保留在
+`solution/native-agent-v0-tool-loop`。请先在 `main` 独立完成，再对照答案。
 
 ## 环境
 
 ```powershell
 $py = 'D:\Chuo_Data\conda_envs\ChuoEnv\python.exe'
-& $py -m pytest
+& $py -m pytest tests/test_registry.py tests/test_executor.py tests/test_runtime.py
 & $py -m kaiji.demo
 ```
 

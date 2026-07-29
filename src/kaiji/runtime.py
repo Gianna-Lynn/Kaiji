@@ -39,7 +39,8 @@ class AgentRuntime:
         # 3. execute a tool call, trace it, and append assistant/tool messages;
         # 4. return TOOL_FAILED when the ToolResult is not ok;
         # 5. append only ok results to successful_tool_results;
-        # 6. after exactly max_steps tool iterations, return MAX_STEPS.
+        # 6. stop repeated name+arguments calls with DUPLICATE_CALL;
+        # 7. after exactly max_steps tool iterations, return MAX_STEPS.
         #
         # Every exit path must append a "stop" TraceEvent and return a
         # self-consistent RunResult. Use the tests as the executable contract.

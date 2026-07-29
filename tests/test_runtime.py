@@ -4,13 +4,15 @@ from kaiji.runtime import AgentRuntime
 from kaiji.tools import ToolExecutor
 
 
-def action_for(tool_name: str = "calculate_discount") -> ModelAction:
+def action_for(
+    tool_name: str = "calculate_discount", *, percent: int = 10
+) -> ModelAction:
     return ModelAction(
         kind="tool_call",
         tool_call=ToolCall(
             call_id="call-1",
             name=tool_name,
-            arguments={"price": 100, "percent": 10},
+            arguments={"price": 100, "percent": percent},
         ),
     )
 
@@ -50,7 +52,7 @@ def test_runtime_stops_on_tool_failure() -> None:
 
 
 def test_runtime_has_hard_maximum_steps() -> None:
-    provider = ScriptedDecisionProvider([action_for(), action_for()])
+    provider = ScriptedDecisionProvider([action_for(), action_for(percent=20)])
     runtime = AgentRuntime(
         provider,
         ToolExecutor(build_registry()),
@@ -62,3 +64,13 @@ def test_runtime_has_hard_maximum_steps() -> None:
     assert result.stop_reason == StopReason.MAX_STEPS
     assert result.steps == 2
     assert result.answer is None
+
+
+def test_runtime_stops_repeated_identical_calls() -> None:
+    provider = ScriptedDecisionProvider([action_for(), action_for()])
+    runtime = AgentRuntime(provider, ToolExecutor(build_registry()), max_steps=3)
+
+    result = runtime.run("Repeat forever")
+
+    assert result.stop_reason == StopReason.DUPLICATE_CALL
+    assert len(result.successful_tool_results) == 1
