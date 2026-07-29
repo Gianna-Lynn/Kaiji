@@ -2,6 +2,8 @@
 
 Kaiji 是 Azusa 之上的独立 Agent 应用工程项目。它不重新实现 HNSW 或 RAG，而是通过工具适配器调用 Azusa，学习并实现可靠的单 Agent Runtime。
 
+Kaiji 的核心对象是 Message、Tool、AgentState、Workflow、Checkpoint、Trace 和 Eval Case；当前仓库处于基础设施搭建前的架构确认阶段。
+
 ## 项目关系
 
 ```text
@@ -10,6 +12,8 @@ Kaiji Agent
   └─ search_azusa / get_chunk_by_id
        └─ Azusa HNSW + RAG
 ```
+
+当前明确的 Azusa 接入面为 `search_azusa(query, k, mode)` 与 `get_chunk_by_id(chunk_id)`。Kaiji 不导入 Azusa 内部实现。
 
 Azusa 提供检索与证据能力；Kaiji 负责工具选择、状态推进、有限重试、证据判断、回答和可观测性。Kaiji 不导入 Azusa 内部实现，优先通过 HTTP 或 tool adapter 集成。
 
@@ -46,6 +50,8 @@ Azusa 提供检索与证据能力；Kaiji 负责工具选择、状态推进、�
 
 在本阶段不做多 Agent、复杂长期记忆、任意代码执行、浏览器自动化、MCP 大型生态、Kubernetes、分布式 Runtime 或 vLLM 内核工作。
 
+FastAPI、Docker Compose 与部署包装属于收口加分项，不得阻塞核心能力。
+
 ## 验收标准
 
 - 可以不依赖框架解释并修改完整 Tool Agent Loop。
@@ -60,3 +66,5 @@ Azusa 提供检索与证据能力；Kaiji 负责工具选择、状态推进、�
 - 没有验证命令，不标记完成。
 - 任何单个环境或框架问题不得阻塞主线；必要时使用 Mock/本地 Adapter。
 - Agent 生成的代码必须由项目作者阅读、解释、修改和测试。
+
+推荐验证顺序：单元测试 → Runtime 小闭环 → Trace/Eval 回归 → Mock Adapter → Azusa Adapter → Demo。
