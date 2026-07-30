@@ -1,3 +1,5 @@
+"""验证工具注册表的唯一命名、查找和 JSON Schema 暴露。"""
+
 import pytest
 
 from kaiji.demo import DiscountArgs, DiscountResult
@@ -7,7 +9,7 @@ from kaiji.tools import ToolDefinition, ToolRegistry
 def make_definition(name: str = "discount") -> ToolDefinition:
     return ToolDefinition(
         name=name,
-        description="test tool",
+        description="测试工具",
         arguments_model=DiscountArgs,
         result_model=DiscountResult,
         handler=lambda args: {"final_price": args.price},

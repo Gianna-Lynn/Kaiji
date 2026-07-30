@@ -1,3 +1,5 @@
+"""定义 Kaiji 固定评测用例、观测结果、指标聚合与参考运行器。"""
+
 from __future__ import annotations
 
 import json
@@ -12,6 +14,8 @@ from kaiji.models import StopReason
 
 
 class EvalCase(BaseModel):
+    """定义一条固定评测用例及其期望行为。"""
+
     case_id: str
     prompt: str
     category: str
@@ -23,6 +27,8 @@ class EvalCase(BaseModel):
 
 
 class EvalObservation(BaseModel):
+    """记录被测 Agent 在一条用例上的实际表现。"""
+
     case_id: str
     task_success: bool
     selected_tool: str | None
@@ -38,6 +44,8 @@ class EvalObservation(BaseModel):
 
 
 class EvalReport(BaseModel):
+    """汇总整套评测的可靠性、效率、延迟和引用指标。"""
+
     case_count: int
     task_success_rate: float
     tool_selection_accuracy: float
@@ -53,6 +61,8 @@ class EvalReport(BaseModel):
 
 
 def load_cases(path: Path) -> list[EvalCase]:
+    """从 JSONL 文件加载并校验固定评测用例。"""
+
     return [
         EvalCase.model_validate_json(line)
         for line in path.read_text(encoding="utf-8").splitlines()
@@ -73,20 +83,22 @@ def _percentile(values: list[float], percentile: float) -> float:
 
 
 def aggregate(cases: list[EvalCase], observations: list[EvalObservation]) -> EvalReport:
+    """聚合完整观测集；练习版需要补全各指标的正确分母。"""
+
     case_by_id = {case.case_id: case for case in cases}
     if set(case_by_id) != {item.case_id for item in observations}:
         raise ValueError("observations must cover every eval case exactly once")
 
-    # TODO 11: Aggregate the fixed observations.
+    # TODO 11：聚合固定观测结果。
     #
-    # Denominators matter:
-    # - selection/argument: cases that expect a tool;
-    # - retry recovery: cases marked expects_retry_recovery;
-    # - citation: cases marked expects_citation;
-    # - tool success/unnecessary: actual tool call count.
+    # 分母必须严格区分：
+    # - selection/argument：期望调用工具的用例；
+    # - retry recovery：标记 expects_retry_recovery 的用例；
+    # - citation：标记 expects_citation 的用例；
+    # - tool success/unnecessary：实际发生的工具调用次数。
     #
-    # Use _rate and _percentile, and count every StopReason. Do not silently
-    # skip a missing case (the exact-coverage guard above is intentional).
+    # 使用 _rate 和 _percentile，并统计每种 StopReason。不得静默跳过缺失用例；
+    # 上方的精确覆盖检查是刻意保留的契约。
     del case_by_id
     return EvalReport(
         case_count=len(cases),
@@ -108,11 +120,13 @@ def run_eval(
     cases: list[EvalCase],
     runner: Callable[[EvalCase], EvalObservation],
 ) -> EvalReport:
+    """逐条运行固定用例，并把观测结果交给聚合器。"""
+
     return aggregate(cases, [runner(case) for case in cases])
 
 
 def reference_observation(case: EvalCase) -> EvalObservation:
-    """Deterministic gold runner used to validate the metric pipeline itself."""
+    """生成确定性的金标观测，用于验证评测指标管线本身。"""
 
     tool_calls = 0 if case.expected_tool is None else (2 if case.expects_retry_recovery else 1)
     return EvalObservation(
@@ -132,4 +146,6 @@ def reference_observation(case: EvalCase) -> EvalObservation:
 
 
 def report_to_json(report: EvalReport) -> str:
+    """把评测报告格式化为便于阅读的中文环境 JSON 文本。"""
+
     return json.dumps(report.model_dump(), ensure_ascii=False, indent=2)

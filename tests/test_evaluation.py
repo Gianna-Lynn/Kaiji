@@ -1,3 +1,5 @@
+"""验证固定评测集的覆盖范围、指标计算和用例完整性检查。"""
+
 from pathlib import Path
 
 import pytest

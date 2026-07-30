@@ -1,3 +1,5 @@
+"""定义工具契约、注册表、参数与结果校验、超时和有界重试。"""
+
 from __future__ import annotations
 
 from collections.abc import Callable
@@ -11,7 +13,7 @@ from kaiji.models import ToolCall, ToolErrorCode, ToolFailure, ToolResult
 
 
 class ToolExecutionError(Exception):
-    """An expected tool failure with an explicit retry policy."""
+    """表示工具预期内的执行失败，并显式携带是否可重试。"""
 
     def __init__(self, message: str, *, retryable: bool) -> None:
         super().__init__(message)
@@ -20,6 +22,8 @@ class ToolExecutionError(Exception):
 
 @dataclass(frozen=True, slots=True)
 class ToolDefinition:
+    """定义工具名称、说明、输入输出模型、处理函数和可靠性策略。"""
+
     name: str
     description: str
     arguments_model: type[BaseModel]
@@ -38,26 +42,30 @@ class ToolDefinition:
 
 
 class ToolRegistry:
+    """按唯一名称保存工具定义，并向模型暴露参数 Schema。"""
+
     def __init__(self) -> None:
         self._tools: dict[str, ToolDefinition] = {}
 
     def register(self, definition: ToolDefinition) -> None:
-        # TODO 1: Reject duplicate names, otherwise store the definition.
-        # Keep the name as the only lookup key; descriptions are not identities.
+        # TODO 1：拒绝重复名称，否则保存工具定义。
+        # 名称是唯一查找键；描述文本不参与工具身份判断。
         pass
 
     def get(self, name: str) -> ToolDefinition | None:
-        # TODO 1: Return None for an unknown name. Do not raise here because the
-        # Executor owns the structured UNKNOWN_TOOL policy.
+        # TODO 1：未知名称返回 None。此处不抛异常，因为 Executor 负责把它
+        # 转换为结构化 UNKNOWN_TOOL 失败。
         return None
 
     def schemas(self) -> list[dict[str, Any]]:
-        # TODO 1: Expose each tool's name, description, and Pydantic-generated
-        # JSON Schema under the "parameters" key.
+        # TODO 1：暴露工具名称、描述，以及放在 parameters 字段下的
+        # Pydantic JSON Schema。
         return []
 
 
 class ToolExecutor:
+    """在工具权限边界内完成调用准备、执行、结果校验和有界重试。"""
+
     def __init__(self, registry: ToolRegistry) -> None:
         self._registry = registry
 
@@ -72,16 +80,15 @@ class ToolExecutor:
     def _prepare_call(
         self, call: ToolCall
     ) -> ToolResult | tuple[ToolDefinition, BaseModel]:
-        """Resolve a tool and validate arguments without invoking its handler."""
-        # TODO 2:
-        # 1. Resolve call.name through the Registry.
-        # 2. Return UNKNOWN_TOOL with attempts=0 when it is absent.
-        # 3. Validate call.arguments with definition.arguments_model.
-        # 4. Return INVALID_ARGUMENTS with attempts=0 on ValidationError.
+        """查找工具并校验参数，但不执行处理函数。"""
+        # TODO 2：
+        # 1. 通过 Registry 查找 call.name。
+        # 2. 工具不存在时返回 UNKNOWN_TOOL，attempts=0。
+        # 3. 使用 definition.arguments_model 校验 call.arguments。
+        # 4. 捕获 ValidationError，返回 INVALID_ARGUMENTS，attempts=0。
         #
-        # Returning a ToolResult for failure and (definition, arguments) for
-        # success keeps execute() explicit without using exceptions as control
-        # flow.
+        # 失败时返回 ToolResult，成功时返回 (definition, arguments)，可以让
+        # execute() 的控制流保持显式，而不是用异常代替正常分支。
         return self._failure(
             call,
             ToolErrorCode.EXECUTION_FAILED,
@@ -96,14 +103,14 @@ class ToolExecutor:
         definition: ToolDefinition,
         arguments: BaseModel,
     ) -> ToolResult:
-        """Invoke a prepared call, validate output, and apply bounded retry."""
-        # TODO 3:
-        # - attempts_allowed is max_retries + 1.
-        # - Call _invoke_with_timeout inside the attempt loop.
-        # - Validate raw output with definition.result_model before success.
-        # - TIMEOUT and retryable ToolExecutionError may retry.
-        # - ValidationError and unexpected Exception are not retryable.
-        # - Stop when failure is non-retryable or attempts are exhausted.
+        """执行已准备的调用，校验输出，并应用有界重试策略。"""
+        # TODO 3：
+        # - attempts_allowed 等于 max_retries + 1。
+        # - 在尝试循环内部调用 _invoke_with_timeout。
+        # - 返回成功前用 definition.result_model 校验原始输出。
+        # - TIMEOUT 和 retryable=True 的 ToolExecutionError 可以重试。
+        # - ValidationError 与未预期的 Exception 不可重试。
+        # - 遇到不可重试失败或耗尽次数时立即停止。
         return self._failure(
             call,
             ToolErrorCode.EXECUTION_FAILED,

@@ -1,3 +1,5 @@
+"""在显式启用时验证 Kaiji 与真实 Azusa BM25 网关的跨仓库闭环。"""
+
 import os
 
 import pytest
@@ -14,8 +16,10 @@ pytestmark = pytest.mark.skipif(
 
 
 def test_live_azusa_search_then_get_same_chunk() -> None:
-    # The first real request may import local embedding/rerank dependencies even
-    # though bm25 itself is CPU-only, so the live test allows cold-start time.
+    """验证真实检索命中与按 ID 回读的证据正文完全一致。"""
+
+    # 第一次真实请求可能导入本地 embedding/rerank 依赖；即使 BM25 本身只使用
+    # CPU，live test 仍需要为冷启动保留足够时间。
     adapter = AzusaHttpAdapter(
         GATEWAY_URL or "http://127.0.0.1:3010",
         timeout_seconds=120,

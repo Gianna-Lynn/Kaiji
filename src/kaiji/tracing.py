@@ -1,3 +1,5 @@
+"""保存、读取并以人类可读形式重放 Kaiji 的 JSONL Trace。"""
+
 from __future__ import annotations
 
 import json
@@ -10,6 +12,8 @@ from kaiji.models import StopReason, TraceEvent
 
 
 class TraceRecord(BaseModel):
+    """保存一次运行的全部事件、停止原因和附加元数据。"""
+
     run_id: str
     events: list[TraceEvent]
     stop_reason: StopReason
@@ -17,24 +21,30 @@ class TraceRecord(BaseModel):
 
 
 class JsonlTraceStore:
+    """以每行一条 JSON 的格式持久化和重放 Trace。"""
+
     def __init__(self, path: Path) -> None:
         self._path = path
 
     def append(self, record: TraceRecord) -> None:
-        # TODO 10a: Create the parent and append exactly one JSON object per line.
+        """追加一条 TraceRecord；练习版需要补全 JSONL 写入。"""
+        # TODO 10a：创建父目录，并保证每行只追加一个 JSON 对象。
         del record
 
     def load(self, run_id: str) -> TraceRecord | None:
-        # TODO 10b: Find a record by run_id without changing file order.
+        """按 run_id 查找记录，且不改变文件顺序。"""
+        # TODO 10b：按 run_id 查找记录，不改变文件顺序。
         del run_id
         return None
 
     def iter_records(self) -> list[TraceRecord]:
-        # TODO 10c: Missing files are empty stores; validate every nonblank line.
+        """按文件顺序返回所有经过模型校验的非空记录。"""
+        # TODO 10c：文件不存在视为空存储；校验每一条非空行。
         return []
 
     def replay_summary(self, run_id: str) -> list[str]:
-        # TODO 10d: Raise KeyError for an unknown run and produce stable,
-        # human-readable step/event/data lines for a known run.
+        """把指定运行转换为稳定、便于人阅读的事件摘要。"""
+        # TODO 10d：未知 run 抛 KeyError；已知 run 生成稳定且便于阅读的
+        # step/event/data 文本行。
         del run_id
         return []

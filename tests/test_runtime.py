@@ -1,3 +1,5 @@
+"""验证原生 Agent Runtime 的结果回填、停止原因和重复调用保护。"""
+
 from kaiji.demo import ScriptedDecisionProvider, build_registry
 from kaiji.models import ModelAction, StopReason, ToolCall
 from kaiji.runtime import AgentRuntime

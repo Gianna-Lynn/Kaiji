@@ -1,4 +1,4 @@
-"""Kaiji: a small, explicit single-agent runtime."""
+"""导出 Kaiji 单 Agent Runtime 的主要公共类型与组件。"""
 
 from kaiji.models import StopReason, ToolCall, ToolResult
 from kaiji.runtime import AgentRuntime
