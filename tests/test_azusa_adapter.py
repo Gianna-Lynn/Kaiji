@@ -1,3 +1,5 @@
+"""验证 Mock、语义 HTTP 与当前 Rust Azusa 兼容适配器的契约。"""
+
 import httpx
 import pytest
 

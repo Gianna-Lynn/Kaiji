@@ -1,3 +1,5 @@
+"""验证工具执行器的校验、重试、失败分类、结果约束与超时。"""
+
 import time
 
 from pydantic import BaseModel
@@ -41,7 +43,7 @@ def test_arguments_are_validated_before_handler_runs() -> None:
     executor = executor_for(
         ToolDefinition(
             name="discount",
-            description="test",
+            description="测试工具",
             arguments_model=DiscountArgs,
             result_model=DiscountResult,
             handler=handler,
@@ -75,7 +77,7 @@ def test_retryable_failure_recovers_after_one_retry() -> None:
     executor = executor_for(
         ToolDefinition(
             name="flaky",
-            description="test",
+            description="测试工具",
             arguments_model=DiscountArgs,
             result_model=DiscountResult,
             handler=flaky_handler,
@@ -103,7 +105,7 @@ def test_non_retryable_failure_stops_immediately() -> None:
     executor = executor_for(
         ToolDefinition(
             name="broken",
-            description="test",
+            description="测试工具",
             arguments_model=DiscountArgs,
             result_model=DiscountResult,
             handler=broken_handler,
@@ -128,7 +130,7 @@ def test_invalid_tool_output_never_becomes_success() -> None:
     executor = executor_for(
         ToolDefinition(
             name="bad_output",
-            description="test",
+            description="测试工具",
             arguments_model=DiscountArgs,
             result_model=DiscountResult,
             handler=lambda args: {"wrong_field": args.price},
@@ -156,7 +158,7 @@ def test_timeout_is_structured_and_respects_retry_policy() -> None:
     executor = executor_for(
         ToolDefinition(
             name="slow",
-            description="test",
+            description="测试工具",
             arguments_model=DiscountArgs,
             result_model=DiscountResult,
             handler=slow_handler,

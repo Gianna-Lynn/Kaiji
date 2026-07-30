@@ -1,3 +1,5 @@
+"""定义工具契约、注册表、参数与结果校验、超时和有界重试。"""
+
 from __future__ import annotations
 
 from collections.abc import Callable
@@ -11,7 +13,7 @@ from kaiji.models import ToolCall, ToolErrorCode, ToolFailure, ToolResult
 
 
 class ToolExecutionError(Exception):
-    """An expected tool failure with an explicit retry policy."""
+    """表示工具预期内的执行失败，并显式携带是否可重试。"""
 
     def __init__(self, message: str, *, retryable: bool) -> None:
         super().__init__(message)
@@ -20,6 +22,8 @@ class ToolExecutionError(Exception):
 
 @dataclass(frozen=True, slots=True)
 class ToolDefinition:
+    """定义工具名称、说明、输入输出模型、处理函数和可靠性策略。"""
+
     name: str
     description: str
     arguments_model: type[BaseModel]
@@ -38,6 +42,8 @@ class ToolDefinition:
 
 
 class ToolRegistry:
+    """按唯一名称保存工具定义，并向模型暴露参数 Schema。"""
+
     def __init__(self) -> None:
         self._tools: dict[str, ToolDefinition] = {}
 
@@ -61,10 +67,14 @@ class ToolRegistry:
 
 
 class ToolExecutor:
+    """在工具权限边界内完成调用准备、执行、结果校验和有界重试。"""
+
     def __init__(self, registry: ToolRegistry) -> None:
         self._registry = registry
 
     def execute(self, call: ToolCall) -> ToolResult:
+        """执行一次逻辑工具调用，并返回成功输出或结构化失败。"""
+
         definition = self._registry.get(call.name)
         if definition is None:
             return self._failure(
@@ -116,7 +126,7 @@ class ToolExecutor:
                     message=str(exc),
                     retryable=False,
                 )
-            except Exception as exc:  # A tool must not crash the runtime.
+            except Exception as exc:  # 任何工具异常都不得击穿 Runtime。
                 failure = ToolFailure(
                     code=ToolErrorCode.EXECUTION_FAILED,
                     message=f"{type(exc).__name__}: {exc}",
@@ -138,6 +148,8 @@ class ToolExecutor:
     def _invoke_with_timeout(
         definition: ToolDefinition, arguments: BaseModel
     ) -> Any:
+        """在线程池中执行处理函数，并对单次尝试施加超时。"""
+
         pool = ThreadPoolExecutor(max_workers=1, thread_name_prefix=definition.name)
         future = pool.submit(definition.handler, arguments)
         try:
@@ -154,6 +166,8 @@ class ToolExecutor:
         retryable: bool,
         attempts: int,
     ) -> ToolResult:
+        """构造字段一致的失败 ToolResult。"""
+
         return ToolResult(
             call_id=call.call_id,
             tool_name=call.name,

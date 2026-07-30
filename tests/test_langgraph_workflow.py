@@ -1,3 +1,5 @@
+"""验证 LangGraph 的检索、改写、终止、Checkpoint 与人工确认恢复。"""
+
 from kaiji.adapters.azusa import MockAzusaAdapter, SearchResponse
 from kaiji.langgraph_workflow import (
     build_agent_graph,

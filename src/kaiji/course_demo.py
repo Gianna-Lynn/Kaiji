@@ -1,3 +1,5 @@
+"""离线演示原生工具、LangChain Runnable 与 LangGraph 工作流的共同契约。"""
+
 from __future__ import annotations
 
 from kaiji.adapters.azusa import MockAzusaAdapter
@@ -9,6 +11,8 @@ from kaiji.tools import ToolExecutor
 
 
 def main() -> None:
+    """依次运行原生、LangChain 和 LangGraph 三种表达方式。"""
+
     adapter = MockAzusaAdapter()
 
     native = ToolExecutor(build_azusa_registry(adapter)).execute(

@@ -1,3 +1,5 @@
+"""验证 Checkpoint 完整快照和 Memory 精选事实可以持久化恢复。"""
+
 from kaiji.persistence import (
     Checkpoint,
     JsonCheckpointStore,

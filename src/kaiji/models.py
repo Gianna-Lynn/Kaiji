@@ -1,3 +1,5 @@
+"""定义消息、工具调用、结构化失败、Trace 与 Runtime 返回值等核心模型。"""
+
 from __future__ import annotations
 
 from enum import StrEnum
@@ -7,6 +9,8 @@ from pydantic import BaseModel, Field, model_validator
 
 
 class ToolErrorCode(StrEnum):
+    """工具调用在进入 Runtime 后可能产生的稳定错误分类。"""
+
     UNKNOWN_TOOL = "unknown_tool"
     INVALID_ARGUMENTS = "invalid_arguments"
     TIMEOUT = "timeout"
@@ -15,6 +19,8 @@ class ToolErrorCode(StrEnum):
 
 
 class StopReason(StrEnum):
+    """表示 Agent Runtime 和工作流对外暴露的明确停止原因。"""
+
     COMPLETED = "completed"
     TOOL_FAILED = "tool_failed"
     MAX_STEPS = "max_steps"
@@ -24,18 +30,24 @@ class StopReason(StrEnum):
 
 
 class ToolCall(BaseModel):
+    """描述模型请求执行的一次具名工具调用。"""
+
     call_id: str = Field(min_length=1)
     name: str = Field(min_length=1)
     arguments: dict[str, Any]
 
 
 class ToolFailure(BaseModel):
+    """保存可序列化的工具失败及其重试属性。"""
+
     code: ToolErrorCode
     message: str
     retryable: bool
 
 
 class ToolResult(BaseModel):
+    """保存工具成功输出或结构化失败，两者必须严格互斥。"""
+
     call_id: str
     tool_name: str
     ok: bool
@@ -53,12 +65,16 @@ class ToolResult(BaseModel):
 
 
 class Message(BaseModel):
+    """表示用户、助手或工具在一次对话中的消息。"""
+
     role: Literal["user", "assistant", "tool"]
     content: str
     tool_result: ToolResult | None = None
 
 
 class ModelAction(BaseModel):
+    """表示模型下一步选择调用工具或直接给出最终回答。"""
+
     kind: Literal["tool_call", "final_answer"]
     tool_call: ToolCall | None = None
     final_answer: str | None = None
@@ -73,12 +89,16 @@ class ModelAction(BaseModel):
 
 
 class TraceEvent(BaseModel):
+    """记录某一步发生的模型动作、工具结果或停止事件。"""
+
     step: int
     event: Literal["model_action", "tool_result", "stop"]
     data: dict[str, Any]
 
 
 class RunResult(BaseModel):
+    """汇总一次 Agent 运行的回答、停止原因、证据、消息和 Trace。"""
+
     answer: str | None
     stop_reason: StopReason
     steps: int

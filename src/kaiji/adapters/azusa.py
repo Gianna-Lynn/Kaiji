@@ -1,3 +1,5 @@
+"""定义 Azusa 语义接口、离线 Mock 和当前 Rust 服务的兼容适配器。"""
+
 from __future__ import annotations
 
 from collections.abc import Callable
@@ -8,6 +10,8 @@ from pydantic import BaseModel, ConfigDict, Field
 
 
 class SearchHit(BaseModel):
+    """表示一条由 Azusa 返回并可作为证据使用的检索命中。"""
+
     chunk_id: str
     text: str
     score: float | None = None
@@ -17,11 +21,15 @@ class SearchHit(BaseModel):
 
 
 class SearchResponse(BaseModel):
+    """封装 Azusa 检索命中及实际使用的检索模式。"""
+
     hits: list[SearchHit]
     mode: str
 
 
 class ChunkResponse(BaseModel):
+    """表示按稳定 chunk_id 取回的完整证据正文与元数据。"""
+
     chunk_id: str
     text: str
     source: str | None = None
@@ -30,22 +38,26 @@ class ChunkResponse(BaseModel):
 
 
 class AzusaAdapterError(Exception):
+    """表示适配器边界内的失败，并保留是否适合重试。"""
+
     def __init__(self, message: str, *, retryable: bool) -> None:
         super().__init__(message)
         self.retryable = retryable
 
 
 class AzusaAdapter(Protocol):
+    """规定 Kaiji 依赖的两个稳定 Azusa 语义调用。"""
+
     def search_azusa(self, query: str, k: int, mode: str) -> SearchResponse: ...
 
     def get_chunk_by_id(self, chunk_id: str) -> ChunkResponse: ...
 
 
 class AzusaHttpAdapter:
-    """Adapter for the stable semantic HTTP contract expected by Kaiji.
+    """调用 Kaiji 期望的稳定 Azusa 语义 HTTP 契约。
 
-    The corresponding thin gateway is intentionally outside Kaiji. It should
-    expose POST /search_azusa and GET /chunks/{chunk_id}.
+    对应的薄网关刻意位于 Kaiji 仓库之外，并暴露
+    POST /search_azusa 与 GET /chunks/{chunk_id}。
     """
 
     def __init__(
@@ -62,6 +74,8 @@ class AzusaHttpAdapter:
         )
 
     def search_azusa(self, query: str, k: int, mode: str) -> SearchResponse:
+        """通过语义网关搜索证据，并把 HTTP 失败映射为重试策略。"""
+
         try:
             response = self._client.post(
                 "/search_azusa",
@@ -81,6 +95,8 @@ class AzusaHttpAdapter:
             raise AzusaAdapterError(str(exc), retryable=True) from exc
 
     def get_chunk_by_id(self, chunk_id: str) -> ChunkResponse:
+        """按 chunk_id 读取完整证据，并校验响应结构。"""
+
         try:
             response = self._client.get(f"/chunks/{chunk_id}")
             response.raise_for_status()
@@ -96,16 +112,17 @@ class AzusaHttpAdapter:
             raise AzusaAdapterError(str(exc), retryable=True) from exc
 
     def close(self) -> None:
+        """关闭底层 HTTP 客户端连接池。"""
+
         self._client.close()
 
 
 class LegacyAzusaVectorHttpAdapter:
-    """Compatibility adapter for Azusa's current Rust demo HTTP API.
+    """兼容 Azusa 当前 Rust 演示 HTTP API 的适配器。
 
-    Current Azusa accepts vectors at POST /search, so a query encoder must be
-    injected. It only represents the HNSW mode. Record metadata must contain
-    chunk_id; the Rust service does not store chunk text, so a local text
-    resolver is also injected.
+    当前 Azusa 的 POST /search 接收向量，因此必须注入 query encoder，而且只表达
+    HNSW 模式。记录元数据必须包含 chunk_id；Rust 服务不保存 chunk 正文，所以还要
+    注入本地 text resolver。
     """
 
     def __init__(
@@ -126,6 +143,8 @@ class LegacyAzusaVectorHttpAdapter:
         )
 
     def search_azusa(self, query: str, k: int, mode: str) -> SearchResponse:
+        """通过当前 Rust 向量接口搜索，并恢复 Kaiji 需要的证据字段。"""
+
         if mode != "hnsw":
             raise AzusaAdapterError(
                 "current Rust Azusa HTTP API only supports hnsw mode",
@@ -166,13 +185,19 @@ class LegacyAzusaVectorHttpAdapter:
             raise AzusaAdapterError(str(exc), retryable=True) from exc
 
     def get_chunk_by_id(self, chunk_id: str) -> ChunkResponse:
+        """用注入的正文解析器按 chunk_id 构造兼容响应。"""
+
         return ChunkResponse(chunk_id=chunk_id, text=self._text_resolver(chunk_id))
 
     def close(self) -> None:
+        """关闭底层 HTTP 客户端连接池。"""
+
         self._client.close()
 
 
 class MockAzusaAdapter:
+    """提供无需网络、GPU 或真实 Azusa 服务的确定性检索结果。"""
+
     model_config = ConfigDict(arbitrary_types_allowed=True)
 
     def __init__(self, chunks: list[ChunkResponse] | None = None) -> None:
@@ -196,6 +221,8 @@ class MockAzusaAdapter:
         }
 
     def search_azusa(self, query: str, k: int, mode: str) -> SearchResponse:
+        """用简单词项匹配搜索内存中的教学证据。"""
+
         terms = set(query.lower().split())
         ranked = sorted(
             self._chunks.values(),
@@ -209,6 +236,8 @@ class MockAzusaAdapter:
         return SearchResponse(hits=hits, mode=mode)
 
     def get_chunk_by_id(self, chunk_id: str) -> ChunkResponse:
+        """按 chunk_id 返回内存证据；未知 ID 为不可重试失败。"""
+
         try:
             return self._chunks[chunk_id]
         except KeyError as exc:

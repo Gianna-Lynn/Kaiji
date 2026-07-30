@@ -1,3 +1,5 @@
+"""验证 LangChain 工具与 Runnable 复用 Kaiji 的 Azusa 契约。"""
+
 from kaiji.adapters.azusa import MockAzusaAdapter, SearchResponse
 from kaiji.langchain_compare import (
     RecordingCallback,

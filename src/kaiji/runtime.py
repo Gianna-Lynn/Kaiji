@@ -1,3 +1,5 @@
+"""定义模型决策协议和具有明确停止原因的原生 Agent 循环。"""
+
 from __future__ import annotations
 
 import json
@@ -14,10 +16,14 @@ from kaiji.tools import ToolExecutor
 
 
 class DecisionProvider(Protocol):
+    """抽象模型决策边界，便于用真实模型或确定性脚本替换。"""
+
     def decide(self, messages: list[Message]) -> ModelAction: ...
 
 
 class AgentRuntime:
+    """执行原生单 Agent 循环，并保证循环、证据和停止原因有明确边界。"""
+
     def __init__(
         self,
         decision_provider: DecisionProvider,
@@ -32,6 +38,8 @@ class AgentRuntime:
         self._max_steps = max_steps
 
     def run(self, question: str) -> RunResult:
+        """运行一次问题处理流程，直到回答或明确停止。"""
+
         messages = [Message(role="user", content=question)]
         successful_results = []
         trace = []

@@ -1,3 +1,5 @@
+"""验证 Trace 的追加、读取、重放和未知运行错误。"""
+
 import pytest
 
 from kaiji.models import StopReason, TraceEvent
