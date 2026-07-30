@@ -22,12 +22,28 @@ class ToolExecutionError(Exception):
 
 @dataclass(frozen=True, slots=True)
 class ToolDefinition:
-    """定义工具名称、说明、输入输出模型、处理函数和可靠性策略。"""
+    """定义工具名称、说明、输入输出模型、处理函数和可靠性策略。  
+    类变量说明:  
+    - 父类说明: BaseModel:  
+        BaseModel 是 Pydantic 库提供的基类。继承它定义的类会自动获得：  
+        数据校验：声明 a: int，传入 "hello" 会自动报错  
+        类型转换：传入 a: "123"（字符串），会自动转成 int(123)  
+        JSON Schema 导出：调用 **.model_json_schema()** 就能拿到标准 JSON Schema（给 LLM 用的工具描述就靠它）  
+    - arguments_model:   
+        含义: 工具输入参数的模式类(是一个类对象, 不是类的实例). type[BaseModel]在Python中表示"BaseModel的子类/BaseModel本身"  
+        用途: 在执行工具前，用arguments_model来校验和解析 LLM 传来的参数.
+    - result_model:   
+        含义: 工具输出结果的模式类.  
+        用途: handler 执行完后，用result_model去校验返回结果是否符合预期格式.  
+    - handler: Callable[[BaseModel], Any]:  
+        含义: 工具的实际处理函数.Callable[[BaseModel], Any] 表示："一个可调用对象, 接受 BaseModel 实例, 返回任意类型（Any）"  
+        它是一个函数: def some_handler(args: BaseModel) -> 随便什么类型  
+    """
 
     name: str
     description: str
     arguments_model: type[BaseModel]
-    result_model: type[BaseModel]
+    result_model: type[BaseModel]     
     handler: Callable[[BaseModel], Any]
     timeout_seconds: float = 2.0
     max_retries: int = 0
@@ -50,18 +66,31 @@ class ToolRegistry:
     def register(self, definition: ToolDefinition) -> None:
         # TODO 1：拒绝重复名称，否则保存工具定义。
         # 名称是唯一查找键；描述文本不参与工具身份判断。
-        pass
+        if definition.name in self._tools:
+            raise ValueError("already registered")
+        else:
+            self._tools[str(definition.name)] = definition
 
     def get(self, name: str) -> ToolDefinition | None:
         # TODO 1：未知名称返回 None。此处不抛异常，因为 Executor 负责把它
         # 转换为结构化 UNKNOWN_TOOL 失败。
-        return None
+        return self._tools.get(name) # 字典的get方法默认返回None
 
     def schemas(self) -> list[dict[str, Any]]:
         # TODO 1：暴露工具名称、描述，以及放在 parameters 字段下的
         # Pydantic JSON Schema。
-        return []
-
+        tool_dict_list : list[dict[str, Any]] =[]
+        for tool in self._tools.values(): # tool是一个ToolDefinition类型对象.
+            tool_dict = {}
+            tool_name: str = tool.name
+            tool_description: str = tool.description
+            tool_pydantic_json_schema: dict = tool.arguments_model.model_json_schema()
+            # .model_json_schema()回一个纯 dict，包含 properties、required、type 等 JSON Schema 字段。
+            tool_dict["name"] = tool_name
+            tool_dict["description"] = tool_description
+            tool_dict["parameters"] = tool_pydantic_json_schema
+            tool_dict_list.append(tool_dict)
+        return tool_dict_list
 
 class ToolExecutor:
     """在工具权限边界内完成调用准备、执行、结果校验和有界重试。"""
