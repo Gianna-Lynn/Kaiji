@@ -90,10 +90,10 @@ git diff main..solution/kaiji-v0-full-course -- src/kaiji/tools.py
 所有命令默认在 `F:\Repositories\Kaiji` 执行：
 
 ```powershell
-$py = 'D:\Chuo_Data\conda_envs\ChuoEnv\python.exe'
+Conda activate ChuoEnv
 
-& $py -m pytest tests/test_scaffold.py
-& $py -m kaiji.demo
+python -m pytest tests/test_scaffold.py
+python -m kaiji.demo
 ```
 
 练习初始状态应当是：
@@ -125,11 +125,12 @@ $py = 'D:\Chuo_Data\conda_envs\ChuoEnv\python.exe'
 - Registry 不负责执行策略。
 
 ```powershell
-& $py -m pytest tests/test_registry.py
+python -m pytest tests/test_registry.py
 ```
 
 完成后应能解释：为什么未知工具由 Executor 转成结构化失败，而不是让 Registry 抛出
 运行时异常？
+答: Registry只负责检索工作, 返回"某某工具是有还是没有".Executor在拿到Registry的返回结果后,决定怎么使用.Executor有整个 Agent 循环的控制权（State、Budget、Trace、Approval）,由它负责决策.
 
 #### TODO 2：调用前校验
 
@@ -143,10 +144,11 @@ $py = 'D:\Chuo_Data\conda_envs\ChuoEnv\python.exe'
 - 参数错误不可重试。
 
 ```powershell
-& $py -m pytest tests/test_executor.py -k 'unknown or arguments'
+python -m pytest tests/test_executor.py -k 'unknown or arguments'
 ```
 
 完成后应能解释：为什么“没有真正调用 handler”不能算一次 attempt？
+答: 一次attempt精确对应于一次工具的执行.执行可能调用外部API, 写数据库, 进行模型推理等, 代价很高. 而在handler运行之前对参数的校验行为属于内存中的类型比对,代价很低. 因此attempt只负责记录网络超时这样"有资格重试"的动作, 不负责记录参数写错这样的"没有资格重试"的动作, 让调用者可以明确区分.
 
 #### TODO 3：执行、结果校验与有界重试
 
@@ -161,7 +163,7 @@ $py = 'D:\Chuo_Data\conda_envs\ChuoEnv\python.exe'
 - 非法结果永远不能伪装成成功。
 
 ```powershell
-& $py -m pytest tests/test_executor.py
+python -m pytest tests/test_executor.py
 ```
 
 完成后应能画出：第一次失败 → 是否可重试 → 第二次尝试 → 成功或停止。
@@ -180,14 +182,14 @@ $py = 'D:\Chuo_Data\conda_envs\ChuoEnv\python.exe'
 - 重复 name + arguments 调用检测。
 
 ```powershell
-& $py -m pytest tests/test_runtime.py
-& $py -m kaiji.demo
+python -m pytest tests/test_runtime.py
+python -m kaiji.demo
 ```
 
 第一站验收：
 
 ```powershell
-& $py -m pytest tests/test_registry.py tests/test_executor.py tests/test_runtime.py
+python -m pytest tests/test_registry.py tests/test_executor.py tests/test_runtime.py
 ```
 
 此时人应该能脱离代码解释完整 Tool Agent Loop。
@@ -207,7 +209,7 @@ $py = 'D:\Chuo_Data\conda_envs\ChuoEnv\python.exe'
 - Callback 记录。
 
 ```powershell
-& $py -m pytest tests/test_langchain_compare.py
+python -m pytest tests/test_langchain_compare.py
 ```
 
 重点不是记 API，而是回答：原生版本中哪些逻辑被框架包装了？哪些可靠性责任仍然属于
@@ -233,7 +235,7 @@ Kaiji？
 `Command(resume=...)`。
 
 ```powershell
-& $py -m pytest tests/test_langgraph_workflow.py
+python -m pytest tests/test_langgraph_workflow.py
 ```
 
 完成后应能解释：为什么 retry_count 必须存在于显式 State，而不能藏在节点局部变量里？
@@ -257,7 +259,7 @@ Kaiji？
 - `search_azusa` 与 `get_chunk_by_id` 工具注册。
 
 ```powershell
-& $py -m pytest tests/test_azusa_adapter.py
+python -m pytest tests/test_azusa_adapter.py
 ```
 
 这里先使用 MockTransport，不需要启动 Azusa。重点是让网络、检索和 Runtime 保持清晰
@@ -270,7 +272,7 @@ Kaiji？
 Checkpoint 是一次执行的完整恢复快照：
 
 ```powershell
-& $py -m pytest tests/test_persistence.py -k checkpoint
+python -m pytest tests/test_persistence.py -k checkpoint
 ```
 
 #### TODO 9：Memory
@@ -280,7 +282,7 @@ Checkpoint 是一次执行的完整恢复快照：
 Memory 是应用选择长期保留的少量事实，不是整段运行状态：
 
 ```powershell
-& $py -m pytest tests/test_persistence.py -k memory
+python -m pytest tests/test_persistence.py -k memory
 ```
 
 完成后应能用自己的话区分：
@@ -299,7 +301,7 @@ Memory 是应用选择长期保留的少量事实，不是整段运行状态：
 完成 JSONL append、load、迭代和人类可读 replay：
 
 ```powershell
-& $py -m pytest tests/test_tracing.py
+python -m pytest tests/test_tracing.py
 ```
 
 #### TODO 11：固定 Eval
@@ -322,8 +324,8 @@ Memory 是应用选择长期保留的少量事实，不是整段运行状态：
 - Citation Supported。
 
 ```powershell
-& $py -m pytest tests/test_evaluation.py
-& $py -m kaiji.eval_demo
+python -m pytest tests/test_evaluation.py
+python -m kaiji.eval_demo
 ```
 
 注意分母：没有要求工具调用的 case，不应进入工具选择准确率的分母。
@@ -339,13 +341,13 @@ Set-Location F:\Repositories\Azusa
 git switch todo/kaiji-semantic-gateway
 Set-Location rag
 
-& $py -m pytest tests/test_kaiji_gateway.py
+python -m pytest tests/test_kaiji_gateway.py
 ```
 
 测试全绿后启动语义网关：
 
 ```powershell
-& $py run_kaiji_gateway.py --port 3010
+python run_kaiji_gateway.py --port 3010
 ```
 
 在另一个终端回到 Kaiji：
@@ -354,7 +356,7 @@ Set-Location rag
 Set-Location F:\Repositories\Kaiji
 $env:AZUSA_GATEWAY_URL = 'http://127.0.0.1:3010'
 
-& $py -m pytest tests/test_azusa_live_integration.py
+python -m pytest tests/test_azusa_live_integration.py
 ```
 
 这条测试会使用 Azusa 现有 `embedding.jsonl`：
@@ -377,16 +379,16 @@ Kaiji：
 
 ```powershell
 Set-Location F:\Repositories\Kaiji
-& $py -m pytest
-& $py -m kaiji.course_demo
-& $py -m kaiji.eval_demo
+python -m pytest
+python -m kaiji.course_demo
+python -m kaiji.eval_demo
 ```
 
 Azusa：
 
 ```powershell
 Set-Location F:\Repositories\Azusa\rag
-& $py -m pytest tests/test_kaiji_gateway.py
+python -m pytest tests/test_kaiji_gateway.py
 ```
 
 代码全绿还不是最终完成。人还应当能够回答：

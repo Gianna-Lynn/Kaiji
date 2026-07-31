@@ -30,7 +30,13 @@ class StopReason(StrEnum):
 
 
 class ToolCall(BaseModel):
-    """描述模型请求执行的一次具名工具调用。"""
+    """
+    描述模型请求执行的一次具名工具调用。  
+    类变量说明:  
+    - call_id: str  
+    - name: str  
+    - argument: dict[str, Any]  
+    """
 
     call_id: str = Field(min_length=1)
     name: str = Field(min_length=1)
@@ -38,15 +44,22 @@ class ToolCall(BaseModel):
 
 
 class ToolFailure(BaseModel):
-    """保存可序列化的工具失败及其重试属性。"""
-
+    """保存可序列化的工具失败及其重试属性。  
+    部分类变量说明:
+    retryable: bool: 说明这次失败后，在“不改参数、不换工具”的前提下，再执行一次有没有合理机会成功？
+    retryable的值是由这一种失败本身的性质决定的.
+    """
     code: ToolErrorCode
     message: str
     retryable: bool
 
 
 class ToolResult(BaseModel):
-    """保存工具成功输出或结构化失败，两者必须严格互斥。"""
+    """保存工具成功输出或结构化失败，两者必须严格互斥。
+    部分类变量说明:
+    attempts: int, 大于等于零. attempt记录的是: 到产生这个结果为止, 工具实际上被调用了多少次.
+    attempts等于零的情况: UNKNOWN_TOOL: 工具名在注册表中找不到, 所以没有执行. INVALID_ARGUMENTS: 参数校验没通过, 所以没有执行.
+    """
 
     call_id: str
     tool_name: str
