@@ -270,4 +270,4 @@ def test_handler_return_original_error_message() -> None:
     assert result.error is not None
     assert result.error.code == ToolErrorCode.EXECUTION_FAILED
     assert result.error.retryable is False
-    assert "工具调用失败, 报错信息为value_error_handler raise ValueError" == result.error.message
+    assert "[ValueError] value_error_handler raise ValueError, 工具调用出现了其他失败类型" == result.error.message

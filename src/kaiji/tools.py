@@ -205,7 +205,7 @@ class ToolExecutor:
                     # 可以给BaseModel.model_dump()添加一个参数mode='json'.
                     # 这样做会把Decimal变成字符串, 普通int和float是JSON数字.
                 )
-            except FutureTimeoutError:
+            except FutureTimeoutError as e:
                 # 工具调用等待时间耗尽: 可重试, 若尝试次数耗尽, 就返回
                 if cnt == max_tries - 1:
                     return self._failure(
