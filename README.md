@@ -2,7 +2,7 @@
 
 Kaiji 是 Azusa 之上的独立 Agent 应用工程项目。它不重新实现 HNSW 或 RAG，而是通过工具适配器调用 Azusa，学习并实现可靠的单 Agent Runtime。
 
-Kaiji 的核心对象是 Message、Tool、AgentState、Workflow、Checkpoint、Trace 和 Eval Case；当前仓库处于基础设施搭建前的架构确认阶段。
+Kaiji 的核心对象是 Message、Tool、AgentState、Workflow、Checkpoint、Trace 和 Eval Case。当前课程已经搭建到 TODO 12：`main` 保留练习代码，`solution/kaiji-v0-full-course` 保存经过验证的完整参考实现。
 
 ## 项目关系
 
@@ -28,7 +28,7 @@ Azusa 提供检索与证据能力；Kaiji 负责工具选择、状态推进、�
   - 三个安全工具、Tool Registry、Executor
   - 结果回填、最大步骤、超时、有界重试、停止原因、Trace
 - **08-03—08-06：LangChain 对照**
-  - 用 LangChain 重建同一组工具与 case
+  - 用 `search_azusa` 对照 Message、StructuredTool、Runnable 与 Callback
   - 记录原生实现和框架抽象的差异
 - **08-07—08-13：LangGraph 状态工作流**
   - AgentState、Node、Edge、Conditional Edge

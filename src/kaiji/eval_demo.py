@@ -1,4 +1,4 @@
-"""加载固定评测集并输出参考评测指标报告。"""
+"""加载固定评测集并输出聚合器合成金标报告，不执行真实 Agent。"""
 
 from pathlib import Path
 
@@ -11,7 +11,7 @@ from kaiji.evaluation import (
 
 
 def main() -> None:
-    """加载仓库中的固定用例并打印参考指标。"""
+    """用确定性合成观测演示指标管线，不把结果冒充 Agent 成绩。"""
 
     root = Path(__file__).resolve().parents[2]
     cases = load_cases(root / "eval" / "cases.jsonl")

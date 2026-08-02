@@ -15,14 +15,12 @@ from kaiji.tools import (
 
 
 def executor_for(definition: ToolDefinition) -> ToolExecutor:
-    """用单个工具定义快速构造 ToolExecutor，减少测试样板代码。"""
     registry = ToolRegistry()
     registry.register(definition)
     return ToolExecutor(registry)
 
 
 def test_unknown_tool_is_structured_and_not_attempted() -> None:
-    """工具名不存在时返回 UNKNOWN_TOOL，且 attempts=0 表示未实际执行。"""
     result = ToolExecutor(ToolRegistry()).execute(
         ToolCall(call_id="1", name="missing", arguments={})
     )
@@ -35,7 +33,6 @@ def test_unknown_tool_is_structured_and_not_attempted() -> None:
 
 
 def test_arguments_are_validated_before_handler_runs() -> None:
-    """参数不合法时直接返回 INVALID_ARGUMENTS，不应触发 handler 执行。"""
     called = False
 
     def handler(args: BaseModel) -> dict:
@@ -68,7 +65,6 @@ def test_arguments_are_validated_before_handler_runs() -> None:
 
 
 def test_retryable_failure_recovers_after_one_retry() -> None:
-    """可重试失败在第一次失败后重试成功，attempts=2 表示 handler 被调用了两次。"""
     attempts = 0
 
     def flaky_handler(args: DiscountArgs) -> dict:
@@ -103,7 +99,6 @@ def test_retryable_failure_recovers_after_one_retry() -> None:
 
 
 def test_non_retryable_failure_stops_immediately() -> None:
-    """不可重试失败直接返回，即使还有重试次数也不再继续，attempts=1。"""
     def broken_handler(args: DiscountArgs) -> dict:
         raise ToolExecutionError("permission denied", retryable=False)
 
@@ -132,7 +127,6 @@ def test_non_retryable_failure_stops_immediately() -> None:
 
 
 def test_invalid_tool_output_never_becomes_success() -> None:
-    """handler 返回不符合 result_model 的数据时，返回 INVALID_RESULT 而非成功。"""
     executor = executor_for(
         ToolDefinition(
             name="bad_output",
@@ -157,7 +151,6 @@ def test_invalid_tool_output_never_becomes_success() -> None:
 
 
 def test_timeout_is_structured_and_respects_retry_policy() -> None:
-    """handler 超时时返回 TIMEOUT 且标记为可重试，max_retries=0 时 attempts=1。"""
     def slow_handler(args: DiscountArgs) -> dict:
         time.sleep(0.05)
         return {"final_price": args.price}
@@ -187,21 +180,23 @@ def test_timeout_is_structured_and_respects_retry_policy() -> None:
     assert result.error.code == ToolErrorCode.TIMEOUT
     assert result.error.retryable
 
-def test_handler_runtime_error_return_execution_failed() -> None:
-    """
-    handler 抛 RuntimeError，应返回 EXECUTION_FAILED，不能向外抛异常。
-    """
-    def runtime_error_handler(args: BaseModel):
-        raise RuntimeError("runtime_error_handler raise RuntimeError")
+
+def test_unexpected_runtime_error_becomes_non_retryable_execution_failure() -> None:
+    """普通异常不得击穿 Runtime，而要转成不可重试的结构化失败。"""
+
+    def runtime_error_handler(args: DiscountArgs) -> dict:
+        raise RuntimeError("runtime handler failed")
+
     executor = executor_for(
         ToolDefinition(
             name="runtime_error_test",
-            description="测试工具",
+            description="测试普通异常边界",
             arguments_model=DiscountArgs,
             result_model=DiscountResult,
             handler=runtime_error_handler,
         )
     )
+
     result = executor.execute(
         ToolCall(
             call_id="7",
@@ -214,56 +209,61 @@ def test_handler_runtime_error_return_execution_failed() -> None:
     assert result.attempts == 1
     assert result.error is not None
     assert result.error.code == ToolErrorCode.EXECUTION_FAILED
-    assert result.error.retryable is False
+    assert not result.error.retryable
 
-def test_attempt_is_two_after_max_attempts() -> None:
-    """可重试的失败持续发生后, 确认最多尝试两次(目前max_retry最多重试次数设置为1, 最多尝试次数为2)"""
-    call_cnt = 0
 
-    def broken_handler_retryable(args: DiscountArgs) -> dict:
-        nonlocal call_cnt
-        call_cnt += 1
+def test_retryable_failure_reports_two_attempts_when_budget_is_exhausted() -> None:
+    """一次重试预算表示最多执行两次 handler，耗尽后 attempts 必须为 2。"""
+
+    call_count = 0
+
+    def always_retryable(args: DiscountArgs) -> dict:
+        nonlocal call_count
+        call_count += 1
         raise ToolExecutionError("temporary outage", retryable=True)
 
     executor = executor_for(
         ToolDefinition(
-            name="broken_handler_retryable",
-            description="测试工具",
+            name="always_retryable",
+            description="测试重试耗尽",
             arguments_model=DiscountArgs,
             result_model=DiscountResult,
-            handler=broken_handler_retryable,
-            max_retries=1, # 最多允许重试一次, handler最多会被调用两次.attempts是handler实实在在被调用的次数, 
+            handler=always_retryable,
+            max_retries=1,
         )
     )
+
     result = executor.execute(
         ToolCall(
             call_id="8",
-            name="broken_handler_retryable",
+            name="always_retryable",
             arguments={"price": 10, "percent": 0},
         )
     )
+
     assert not result.ok
-    assert result.attempts == 2 
-    assert call_cnt == 2
+    assert result.attempts == 2
+    assert call_count == 2
     assert result.error is not None
     assert result.error.retryable
 
 
-def test_handler_return_original_error_message() -> None:
-    """
-    错误结果应保留原始异常信息，便于 Trace 诊断。
-    """
-    def value_error_handler(args: BaseModel):
-        raise ValueError("value_error_handler raise ValueError")
+def test_unexpected_error_message_preserves_type_and_original_text() -> None:
+    """普通异常的结构化消息应保留异常类型和原始文本，便于 Trace 诊断。"""
+
+    def value_error_handler(args: DiscountArgs) -> dict:
+        raise ValueError("value handler failed")
+
     executor = executor_for(
         ToolDefinition(
             name="value_error_handler",
-            description="测试工具",
+            description="测试错误诊断信息",
             arguments_model=DiscountArgs,
             result_model=DiscountResult,
             handler=value_error_handler,
         )
     )
+
     result = executor.execute(
         ToolCall(
             call_id="9",
@@ -276,5 +276,6 @@ def test_handler_return_original_error_message() -> None:
     assert result.attempts == 1
     assert result.error is not None
     assert result.error.code == ToolErrorCode.EXECUTION_FAILED
-    assert result.error.retryable is False
-    assert "[ValueError] value_error_handler raise ValueError, 工具调用出现了其他失败类型" == result.error.message
+    assert not result.error.retryable
+    assert "ValueError" in result.error.message
+    assert "value handler failed" in result.error.message

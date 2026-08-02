@@ -3,6 +3,8 @@ __pycache__/
 *.egg-info/
 .pytest_cache/
 .cache/
+.kaiji-pytest-cache/
+.kaiji-pytest-tmp/
 .coverage
 htmlcov/
 .venv/
