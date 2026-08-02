@@ -15,6 +15,10 @@ from kaiji.models import StopReason
 class AgentState(TypedDict, total=False):
     """描述 LangGraph 节点间共享的状态及各字段的唯一职责。
 
+    ``total=False`` 表示节点可以只返回自己负责更新的字段；LangGraph 会把这份
+    局部更新合并进当前 State，而不是用返回字典替换整份状态。因此节点不得顺手
+    返回或清空不属于自己职责的字段。
+
     ``question`` 保存不可变的原始用户问题，``rewritten_query`` 保存当前真正
     送往 Azusa 的查询。``step_count`` 只统计 search 节点执行次数，也就是
     检索尝试次数；``retry_count`` 只统计 query rewrite 次数；``max_steps``

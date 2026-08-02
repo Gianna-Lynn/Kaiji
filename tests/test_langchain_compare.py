@@ -6,6 +6,7 @@ from typing import Any
 
 import pytest
 from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
+from langchain_core.runnables import RunnableLambda, RunnableSequence
 from pydantic import BaseModel, ValidationError
 
 from kaiji.adapters.azusa import MockAzusaAdapter, SearchResponse
@@ -133,6 +134,16 @@ def test_search_runnable_invokes_the_structured_tool_boundary(monkeypatch) -> No
     assert result == SearchResponse(hits=[], mode="hybrid")
 
 
+def test_search_runnable_keeps_two_explicit_lambda_stages() -> None:
+    """调用工具与校验输出必须是两个可观察的 Runnable 阶段。"""
+
+    runnable = build_search_runnable(MockAzusaAdapter())
+
+    assert isinstance(runnable, RunnableSequence)
+    assert len(runnable.steps) == 2
+    assert all(isinstance(step, RunnableLambda) for step in runnable.steps)
+
+
 def test_structured_tool_applies_defaults_and_forwards_explicit_arguments() -> None:
     """Schema 默认值和显式参数都应原样传给同一个 Adapter。"""
 
@@ -153,6 +164,8 @@ def test_structured_tool_applies_defaults_and_forwards_explicit_arguments() -> N
     assert schema["properties"]["k"]["default"] == 3
     assert schema["properties"]["mode"]["default"] == "hybrid"
     assert tool.args_schema is SearchAzusaArgs
+    assert tool.name == "search_azusa"
+    assert "证据" in tool.description
 
 
 @pytest.mark.parametrize(

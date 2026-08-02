@@ -299,6 +299,10 @@ Kaiji？
 
 先明确 State 字段的职责：
 
+`AgentState` 使用 `TypedDict(total=False)`：每个节点只返回自己负责的局部更新，
+LangGraph 再把它合并进当前 State；节点返回字典不是整份状态的替代品。因此 rewrite
+只更新查询与重试计数，审批节点也不能顺手清空证据、原问题或其他无关字段。
+
 | 字段 | 含义 |
 |---|---|
 | `question` | 原始用户问题，不因改写而覆盖 |
@@ -347,6 +351,10 @@ Kaiji？
 
 完成 AgentState、Node、Edge、Conditional Edge、Checkpoint、Interrupt 和
 `Command(resume=...)`。
+
+`main` 的练习子任务按依赖顺序编号：**6a 先连接图 → 6b Router → 6c Assess →
+6d Rewrite → 6e Interrupt → 6f 审批条件边**。先完成 6a 后，行为测试才会真正进入各
+节点；不要跳过接线后误以为 6b—6f 已经被验证。
 
 ```powershell
 python -m pytest tests/test_langgraph_workflow.py
@@ -460,7 +468,9 @@ Memory 是调用方策略选择长期保留的少量事实，不是整段运行�
 
 Memory 同样严格区分“键不存在”和“键存在但记录损坏”：JSON `null`、空对象或字段
 不合法都必须让 `get()` 与 `list()` 一致报错。外层存储 key 还必须等于记录内部的
-`entry.key`，否则无法可靠判断覆盖和查询的是哪条事实。
+`entry.key`，否则无法可靠判断覆盖和查询的是哪条事实。`put()` 在写入新事实前也必须
+校验已有 Store；不能借一次看似成功的新写入，把旧损坏静默保留下去。Memory 与
+Checkpoint 共用同目录临时文件再 `replace` 的原子写入边界，替换失败时旧文件不变。
 
 ```powershell
 python -m pytest tests/test_persistence.py -k memory
@@ -489,6 +499,8 @@ python -m pytest tests/test_persistence.py -k memory
   `stop` Event 的 `data.reason` 相同；空 events、无 stop、多个 stop、stop 后仍有事件、
   缺失或非法 reason 都属于结构破坏；
 - 文件中每个非空行只能包含一个完整 `TraceRecord` JSON；
+- 追加到外部创建且最后一行没有换行的合法文件时，必须先补物理行分隔符，不能把两个
+  JSON 对象粘在同一行；
 - 缺失文件视为空存储，空白行忽略，非法非空行必须显式报错；
 - `run_id` 在同一文件中必须唯一，重复 append 应拒绝；
 - replay 每行固定包含 `step/event/data`，其中 `data` 使用排序键的紧凑 JSON，保证
@@ -496,6 +508,10 @@ python -m pytest tests/test_persistence.py -k memory
 
 Trace Store 负责结构一致性、存储与回放，不负责判断最终答案在业务上是否正确。追加前
 扫描唯一 `run_id` 的实现只面向单进程教学；并发 writer 与文件锁不在本课范围内。
+
+练习按依赖顺序实现：**10a TraceRecord 不变量 → 10b 严格迭代读取 → 10c 按 ID 加载 →
+10d 唯一追加 → 10e 稳定回放**。其中 append 需要先调用 load 查重，load 又复用
+iter_records；源码中的方法排列也遵循这一依赖顺序。
 
 ```powershell
 python -m pytest tests/test_tracing.py
@@ -544,6 +560,10 @@ runner 必须按下表把运行事实统一映射为 Observation，不能到写�
 
 覆盖契约要求 case ID 和 observation ID 各自唯一，而且两边集合完全相等。适用指标的
 观测值如果为 `None`，按失败计入既定分母，不能静默缩小分母。分母固定为：
+
+Observation 输入顺序不承担身份语义，聚合器必须先按 `case_id` 对齐，再依照 case 文件
+顺序计算；反转 Observation 列表不得改变报告。当某项指标没有任何适用 case，或没有
+发生实际工具调用时，对应比率明确为 `0.0`，不能出现除零、`NaN` 或通过跳过字段改变口径。
 
 | 指标 | 分母 |
 |---|---|
@@ -596,7 +616,7 @@ python -m pytest tests/test_kaiji_gateway.py
 测试全绿后启动语义网关：
 
 ```powershell
-python run_kaiji_gateway.py --port 38117
+python run_kaiji_gateway.py --port 38117 --embedding-path tests/fixtures/kaiji_gateway_embedding.jsonl
 ```
 
 在另一个终端回到 Kaiji：
@@ -608,7 +628,10 @@ $env:AZUSA_GATEWAY_URL = 'http://127.0.0.1:38117'
 python -m pytest -q -rs tests/test_azusa_live_integration.py
 ```
 
-这条测试会使用 Azusa 现有 `embedding.jsonl`：
+这条测试默认使用 Azusa 教学分支中受 Git 跟踪的最小
+`tests/fixtures/kaiji_gateway_embedding.jsonl`，因此新 clone 不需要本机模型、GPU 或先生成
+`output/artifacts/embedding.jsonl`。该 fixture 只证明 HTTP 与 BM25 数据闭环，不代表真实
+语料质量评测：
 
 1. 真实 BM25 搜索 stromules；
 2. 验证命中证据包含 `1962`；
@@ -640,7 +663,7 @@ Set-Location F:\Repositories\Azusa
 git switch todo/kaiji-semantic-gateway
 Set-Location rag
 python -m pytest tests/test_kaiji_gateway.py
-python run_kaiji_gateway.py --port 38117
+python run_kaiji_gateway.py --port 38117 --embedding-path tests/fixtures/kaiji_gateway_embedding.jsonl
 ```
 
 保持网关运行，在另一个终端完成不能跳过的最终闭环：

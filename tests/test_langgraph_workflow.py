@@ -123,15 +123,39 @@ def test_graph_rewrites_empty_query_and_recovers_once() -> None:
 
     assert result["stop_reason"] == StopReason.COMPLETED
     assert result["question"] == "unfindable-token"
+    assert result["rewritten_query"].strip()
     assert result["rewritten_query"] != result["question"]
     assert result["retry_count"] == 1
     assert result["step_count"] == 2
+    assert result["max_steps"] == 3
+    assert result["route"] == "search"
+    assert result["pending_action"] is None
+    assert result["approved"] is None
     assert result["error"] is None
     assert result["error_retryable"] is False
     assert adapter.calls == [
         ("unfindable-token", 3, "hybrid"),
         (result["rewritten_query"], 3, "hybrid"),
     ]
+
+
+def test_graph_query_rewrite_is_deterministic_for_the_same_question() -> None:
+    """相同原问题在不同线程中必须得到相同且非空的确定性改写。"""
+
+    first = run_graph(
+        build_agent_graph(RecordingAdapter()),
+        "unfindable-token",
+        thread_id="deterministic-first",
+    )
+    second = run_graph(
+        build_agent_graph(RecordingAdapter()),
+        "unfindable-token",
+        thread_id="deterministic-second",
+    )
+
+    assert first["rewritten_query"] == second["rewritten_query"]
+    assert first["rewritten_query"].strip()
+    assert first["rewritten_query"] != first["question"]
 
 
 def test_graph_stops_after_single_rewrite_when_result_remains_empty() -> None:
@@ -145,6 +169,21 @@ def test_graph_stops_after_single_rewrite_when_result_remains_empty() -> None:
     assert result["answer"] is None
     assert result["retry_count"] == 1
     assert result["step_count"] == 2
+
+
+def test_graph_prefers_max_steps_after_second_empty_search_at_exact_limit() -> None:
+    """第二次空检索恰好耗尽预算时，步数上限仍优先于改写次数判断。"""
+
+    result = run_graph(
+        build_agent_graph(AlwaysEmptyAdapter()),
+        "unfindable-token",
+        thread_id="max-steps-after-rewrite",
+        max_steps=2,
+    )
+
+    assert result["stop_reason"] == StopReason.MAX_STEPS
+    assert result["step_count"] == 2
+    assert result["retry_count"] == 1
 
 
 def test_graph_returns_max_steps_before_rewrite_when_budget_is_exhausted() -> None:
@@ -196,7 +235,7 @@ def test_graph_does_not_retry_non_retryable_adapter_error() -> None:
     assert adapter.calls == 1
 
 
-@pytest.mark.parametrize("verb", ["delete", "send", "publish"])
+@pytest.mark.parametrize("verb", ["delete", "SEND", "Publish"])
 def test_graph_interrupt_payload_covers_every_side_effect_keyword(verb: str) -> None:
     """三类模拟副作用必须暂停，并暴露稳定的结构化确认载荷。"""
 

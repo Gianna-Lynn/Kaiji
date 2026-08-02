@@ -211,7 +211,9 @@ def test_mixed_observations_exercise_every_metric_formula() -> None:
     ]
 
     report = aggregate(cases, observations)
+    reversed_report = aggregate(cases, list(reversed(observations)))
 
+    assert reversed_report == report
     assert report.case_count == 4
     assert report.task_success_rate == pytest.approx(0.5)
     assert report.tool_selection_accuracy == pytest.approx(2 / 3)
@@ -227,6 +229,23 @@ def test_mixed_observations_exercise_every_metric_formula() -> None:
         StopReason.HUMAN_REJECTED.value: 1,
     }
     assert report.citation_supported_rate == pytest.approx(1 / 2)
+
+
+def test_eval_zero_denominators_are_explicit_zero_rates() -> None:
+    """没有适用工具、重试、引用或实际调用时，各比率必须稳定为零。"""
+
+    cases = [make_case("case-no-tool")]
+    observations = [make_observation("case-no-tool")]
+
+    report = aggregate(cases, observations)
+
+    assert report.task_success_rate == 1.0
+    assert report.tool_selection_accuracy == 0.0
+    assert report.argument_accuracy == 0.0
+    assert report.tool_success_rate == 0.0
+    assert report.retry_recovery_rate == 0.0
+    assert report.unnecessary_tool_call_rate == 0.0
+    assert report.citation_supported_rate == 0.0
 
 
 def make_observation(case_id: str) -> EvalObservation:
@@ -296,6 +315,20 @@ def test_load_cases_rejects_duplicate_ids(tmp_path) -> None:
 
     with pytest.raises(ValueError, match="评测用例.*case-1"):
         load_cases(path)
+
+
+def test_load_cases_preserves_non_empty_file_order(tmp_path) -> None:
+    """JSONL 空行会被忽略，但合法用例必须维持文件中的先后顺序。"""
+
+    path = tmp_path / "ordered-cases.jsonl"
+    second = make_case("case-second").model_dump_json()
+    first = make_case("case-first").model_dump_json()
+    path.write_text(f"\n{second}\n  \n{first}\n", encoding="utf-8")
+
+    assert [case.case_id for case in load_cases(path)] == [
+        "case-second",
+        "case-first",
+    ]
 
 
 @pytest.mark.parametrize(

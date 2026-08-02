@@ -2,6 +2,9 @@ __pycache__/
 *.py[cod]
 *.egg-info/
 .pytest_cache/
+.cache/
+.kaiji-pytest-cache/
+.kaiji-pytest-tmp/
 .coverage
 htmlcov/
 .venv/

@@ -167,12 +167,18 @@ class JsonMemoryStore:
         return entries
 
     def _read_all(self) -> dict[str, dict[str, Any]]:
-        """读取全部长期事实，并校验根对象和每个用户的记录外壳。"""
+        """读取全部长期事实，并校验用户外壳、记录 Schema 与内外键一致性。"""
 
         payload = _read_json_object(self._path, label="Memory")
         entries_by_user: dict[str, dict[str, Any]] = {}
         for user_id, entries in payload.items():
             if not isinstance(entries, dict):
                 raise ValueError(f"Memory 用户 {user_id!r} 的内容必须是对象")
-            entries_by_user[user_id] = entries
+            validated_entries: dict[str, Any] = {}
+            for key, raw_entry in entries.items():
+                entry = MemoryEntry.model_validate(raw_entry)
+                if entry.key != key:
+                    raise ValueError("Memory 存储键与记录中的 entry.key 不一致")
+                validated_entries[key] = entry.model_dump()
+            entries_by_user[user_id] = validated_entries
         return entries_by_user

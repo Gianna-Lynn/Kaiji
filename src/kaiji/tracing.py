@@ -60,25 +60,6 @@ class JsonlTraceStore:
 
         self._path = path
 
-    def append(self, record: TraceRecord) -> None:
-        """把唯一运行轨迹追加为一个物理行；重复标识会被拒绝。"""
-
-        if self.load(record.run_id) is not None:
-            raise ValueError(f"run_id 已存在，不能重复追加: {record.run_id}")
-
-        self._path.parent.mkdir(parents=True, exist_ok=True)
-        with self._path.open("a", encoding="utf-8") as stream:
-            stream.write(record.model_dump_json())
-            stream.write("\n")
-
-    def load(self, run_id: str) -> TraceRecord | None:
-        """按唯一运行标识查找轨迹；文件或标识不存在时返回空值。"""
-
-        for record in self.iter_records():
-            if record.run_id == run_id:
-                return record
-        return None
-
     def iter_records(self) -> list[TraceRecord]:
         """按追加顺序读取轨迹，忽略空行并拒绝非法行或重复标识。"""
 
@@ -106,6 +87,33 @@ class JsonlTraceStore:
             seen_run_ids.add(record.run_id)
             records.append(record)
         return records
+
+    def load(self, run_id: str) -> TraceRecord | None:
+        """按唯一运行标识查找轨迹；文件或标识不存在时返回空值。"""
+
+        for record in self.iter_records():
+            if record.run_id == run_id:
+                return record
+        return None
+
+    def append(self, record: TraceRecord) -> None:
+        """把唯一运行轨迹追加为一个物理行；重复标识会被拒绝。"""
+
+        if self.load(record.run_id) is not None:
+            raise ValueError(f"run_id 已存在，不能重复追加: {record.run_id}")
+
+        self._path.parent.mkdir(parents=True, exist_ok=True)
+        needs_separator = False
+        if self._path.exists() and self._path.stat().st_size > 0:
+            with self._path.open("rb") as existing:
+                existing.seek(-1, 2)
+                needs_separator = existing.read(1) not in {b"\n", b"\r"}
+        with self._path.open("a", encoding="utf-8") as stream:
+            if needs_separator:
+                # 外部写入的合法 JSONL 可能缺少末尾换行；先补分隔符再追加。
+                stream.write("\n")
+            stream.write(record.model_dump_json())
+            stream.write("\n")
 
     def replay_summary(self, run_id: str) -> list[str]:
         """按事件顺序生成具有规范化 ``data`` 文本的逐事件摘要。"""

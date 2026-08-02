@@ -57,6 +57,24 @@ def test_append_creates_nested_parent_directories(tmp_path) -> None:
     assert store.load("run-nested") == make_record("run-nested")
 
 
+def test_append_separates_existing_valid_record_without_final_newline(tmp_path) -> None:
+    """外部 JSONL 即使缺少末尾换行，追加后也不能把两个对象粘成一行。"""
+
+    path = tmp_path / "trace.jsonl"
+    first = make_record("run-existing")
+    second = make_record("run-appended")
+    path.write_text(first.model_dump_json(), encoding="utf-8")
+
+    store = JsonlTraceStore(path)
+    store.append(second)
+
+    assert path.read_text(encoding="utf-8").splitlines() == [
+        first.model_dump_json(),
+        second.model_dump_json(),
+    ]
+    assert store.iter_records() == [first, second]
+
+
 def test_missing_file_and_blank_lines_are_not_records(tmp_path) -> None:
     path = tmp_path / "trace.jsonl"
     store = JsonlTraceStore(path)
@@ -180,10 +198,10 @@ def test_non_empty_invalid_line_is_rejected_with_line_number(tmp_path) -> None:
         store.iter_records()
 
     path.write_text(
-        f'{make_record("run-1").model_dump_json()}\nnot-json\n',
+        f'\n{make_record("run-1").model_dump_json()}\n\nnot-json\n',
         encoding="utf-8",
     )
-    with pytest.raises(ValueError, match="第 2 行"):
+    with pytest.raises(ValueError, match="第 4 行"):
         store.iter_records()
 
 
@@ -217,7 +235,7 @@ def test_replay_uses_event_order_and_stable_compact_json(tmp_path) -> None:
                 event="tool_result",
                 data={"z": ["中文"], "a": {"y": 2, "x": 1}},
             ),
-            TraceEvent(step=2, event="stop", data={"reason": "completed"}),
+            TraceEvent(step=1, event="stop", data={"reason": "completed"}),
         ],
         stop_reason=StopReason.COMPLETED,
     )
@@ -225,7 +243,7 @@ def test_replay_uses_event_order_and_stable_compact_json(tmp_path) -> None:
 
     assert store.replay_summary("run-stable") == [
         'step=2 event=tool_result data={"a":{"x":1,"y":2},"z":["中文"]}',
-        'step=2 event=stop data={"reason":"completed"}',
+        'step=1 event=stop data={"reason":"completed"}',
     ]
 
 

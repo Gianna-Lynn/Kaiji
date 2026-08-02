@@ -181,6 +181,16 @@ def test_checkpoint_corrupt_outer_or_state_is_never_missing(
         store.load("thread-1", "cp-1")
     with pytest.raises(ValueError):
         store.latest("thread-1")
+    original = path.read_text(encoding="utf-8")
+    with pytest.raises(ValueError):
+        store.save(
+            Checkpoint(
+                thread_id="thread-new",
+                checkpoint_id="cp-new",
+                state={"step": 1},
+            )
+        )
+    assert path.read_text(encoding="utf-8") == original
 
 
 def test_checkpoint_invalid_json_is_not_treated_as_empty_store(tmp_path) -> None:
@@ -192,6 +202,15 @@ def test_checkpoint_invalid_json_is_not_treated_as_empty_store(tmp_path) -> None
         store.load("thread-1", "cp-1")
     with pytest.raises(json.JSONDecodeError):
         store.latest("thread-1")
+    with pytest.raises(json.JSONDecodeError):
+        store.save(
+            Checkpoint(
+                thread_id="thread-new",
+                checkpoint_id="cp-new",
+                state={"step": 1},
+            )
+        )
+    assert path.read_text(encoding="utf-8") == "{"
 
 
 def test_checkpoint_missing_file_thread_or_id_returns_none(tmp_path) -> None:
@@ -225,6 +244,45 @@ def test_memory_put_get_round_trips_value_and_tags_across_store_instances(
     restored = JsonMemoryStore(path).get("user-1", "preferred_mode")
 
     assert restored == entry
+
+
+def test_memory_replace_failure_preserves_previous_file(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    """Memory 也必须通过同目录临时文件原子替换，失败时保留旧事实。"""
+
+    path = tmp_path / "memory.json"
+    store = JsonMemoryStore(path)
+    previous = MemoryEntry(key="first", value="old", tags=["stable"])
+    store.put("user-1", previous)
+    replace_calls: list[tuple[Path, Path]] = []
+
+    def fail_replace(temporary: Path, target: Path) -> None:
+        replace_calls.append((temporary, target))
+        assert temporary.parent == target.parent == path.parent
+        assert temporary.name == "memory.json.tmp"
+        assert json.loads(temporary.read_text(encoding="utf-8")) == {
+            "user-1": {
+                "first": {
+                    "key": "first",
+                    "value": "old",
+                    "tags": ["stable"],
+                },
+                "second": {"key": "second", "value": "new", "tags": []},
+            }
+        }
+        assert JsonMemoryStore(path).get("user-1", "first") == previous
+        raise OSError("simulated memory replace failure")
+
+    monkeypatch.setattr(Path, "replace", fail_replace)
+
+    with pytest.raises(OSError, match="simulated memory replace failure"):
+        store.put("user-1", MemoryEntry(key="second", value="new"))
+
+    assert replace_calls == [(path.with_suffix(".json.tmp"), path)]
+    assert JsonMemoryStore(path).get("user-1", "first") == previous
+    assert JsonMemoryStore(path).get("user-1", "second") is None
 
 
 def test_memory_overwrite_keeps_first_insertion_order(tmp_path) -> None:
@@ -300,6 +358,10 @@ def test_memory_corrupt_record_is_not_disguised_as_missing(
         store.get("user-1", "known")
     with pytest.raises(expected_error):
         store.list("user-1")
+    original = path.read_text(encoding="utf-8")
+    with pytest.raises(expected_error):
+        store.put("user-2", MemoryEntry(key="new", value="fact"))
+    assert path.read_text(encoding="utf-8") == original
 
 
 @pytest.mark.parametrize("payload", [[], {"user-1": []}])
@@ -315,6 +377,10 @@ def test_memory_corrupt_outer_container_is_rejected(
         store.get("user-1", "known")
     with pytest.raises(ValueError):
         store.list("user-1")
+    original = path.read_text(encoding="utf-8")
+    with pytest.raises(ValueError):
+        store.put("user-2", MemoryEntry(key="new", value="fact"))
+    assert path.read_text(encoding="utf-8") == original
 
 
 def test_memory_invalid_json_is_not_treated_as_empty_store(tmp_path) -> None:
@@ -326,3 +392,6 @@ def test_memory_invalid_json_is_not_treated_as_empty_store(tmp_path) -> None:
         store.get("user-1", "known")
     with pytest.raises(json.JSONDecodeError):
         store.list("user-1")
+    with pytest.raises(json.JSONDecodeError):
+        store.put("user-2", MemoryEntry(key="new", value="fact"))
+    assert path.read_text(encoding="utf-8") == "{"

@@ -133,6 +133,30 @@ def test_semantic_http_adapter_uses_exact_search_contract_and_maps_fields() -> N
     )
 
 
+def test_semantic_http_adapter_forwards_non_default_search_arguments() -> None:
+    """第二组非默认参数防止 Adapter 把示例值硬编码进请求体。"""
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        assert request.method == "POST"
+        assert request.url.path == "/search_azusa"
+        assert json.loads(request.content) == {
+            "query": "另一条检索问题",
+            "k": 7,
+            "mode": "bm25",
+        }
+        return httpx.Response(200, json={"hits": [], "mode": "bm25"})
+
+    adapter = AzusaHttpAdapter(
+        "http://azusa.test", transport=httpx.MockTransport(handler)
+    )
+    try:
+        result = adapter.search_azusa("另一条检索问题", 7, "bm25")
+    finally:
+        adapter.close()
+
+    assert result == SearchResponse(hits=[], mode="bm25")
+
+
 def test_semantic_http_adapter_encodes_chunk_id_and_validates_response() -> None:
     def handler(request: httpx.Request) -> httpx.Response:
         assert request.method == "GET"
@@ -304,6 +328,76 @@ def test_legacy_adapter_uses_exact_payload_and_preserves_evidence_fields() -> No
         },
     }
     assert chunk == ChunkResponse(chunk_id="c7", text="text for c7")
+
+
+def test_legacy_adapter_forwards_non_default_input_encodes_ids_and_maps_all_hits() -> None:
+    """非默认查询、多命中和特殊 record ID 必须完整穿过兼容数据流。"""
+
+    encoded_queries: list[str] = []
+    resolved_chunks: list[str] = []
+    raw_paths: list[bytes] = []
+
+    def encode(query: str) -> list[float]:
+        encoded_queries.append(query)
+        return [0.25, -0.5]
+
+    def resolve(chunk_id: str) -> str:
+        resolved_chunks.append(chunk_id)
+        return f"正文 {chunk_id}"
+
+    records = {
+        b"/record/folder%2Fid%201": {
+            "id": "folder/id 1",
+            "metadata": {"chunk_id": "chunk-one", "source": "first"},
+        },
+        b"/record/second%3Fid": {
+            "id": "second?id",
+            "metadata": {"chunk_id": "chunk-two", "page": 9},
+        },
+    }
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        raw_paths.append(request.url.raw_path)
+        if request.url.path == "/search":
+            assert json.loads(request.content) == {
+                "vector": [0.25, -0.5],
+                "k": 4,
+                "ef_search": 16,
+            }
+            return httpx.Response(
+                200,
+                json={
+                    "results": [
+                        {"id": "folder/id 1", "score": 0.8},
+                        {"id": "second?id", "score": 0.7},
+                    ]
+                },
+            )
+        return httpx.Response(200, json=records[request.url.raw_path])
+
+    adapter = LegacyAzusaVectorHttpAdapter(
+        "http://azusa.test",
+        query_encoder=encode,
+        text_resolver=resolve,
+        transport=httpx.MockTransport(handler),
+    )
+    try:
+        result = adapter.search_azusa("非默认问题", 4, "hnsw")
+    finally:
+        adapter.close()
+
+    assert encoded_queries == ["非默认问题"]
+    assert raw_paths == [
+        b"/search",
+        b"/record/folder%2Fid%201",
+        b"/record/second%3Fid",
+    ]
+    assert resolved_chunks == ["chunk-one", "chunk-two"]
+    assert [hit.chunk_id for hit in result.hits] == ["chunk-one", "chunk-two"]
+    assert [hit.metadata["record_id"] for hit in result.hits] == [
+        "folder/id 1",
+        "second?id",
+    ]
 
 
 def test_legacy_adapter_rejects_unsupported_mode_before_network_call() -> None:

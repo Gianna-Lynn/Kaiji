@@ -179,3 +179,103 @@ def test_timeout_is_structured_and_respects_retry_policy() -> None:
     assert result.error is not None
     assert result.error.code == ToolErrorCode.TIMEOUT
     assert result.error.retryable
+
+
+def test_unexpected_runtime_error_becomes_non_retryable_execution_failure() -> None:
+    """普通异常不得击穿 Runtime，而要转成不可重试的结构化失败。"""
+
+    def runtime_error_handler(args: DiscountArgs) -> dict:
+        raise RuntimeError("runtime handler failed")
+
+    executor = executor_for(
+        ToolDefinition(
+            name="runtime_error_test",
+            description="测试普通异常边界",
+            arguments_model=DiscountArgs,
+            result_model=DiscountResult,
+            handler=runtime_error_handler,
+        )
+    )
+
+    result = executor.execute(
+        ToolCall(
+            call_id="7",
+            name="runtime_error_test",
+            arguments={"price": 10, "percent": 0},
+        )
+    )
+
+    assert not result.ok
+    assert result.attempts == 1
+    assert result.error is not None
+    assert result.error.code == ToolErrorCode.EXECUTION_FAILED
+    assert not result.error.retryable
+
+
+def test_retryable_failure_reports_two_attempts_when_budget_is_exhausted() -> None:
+    """一次重试预算表示最多执行两次 handler，耗尽后 attempts 必须为 2。"""
+
+    call_count = 0
+
+    def always_retryable(args: DiscountArgs) -> dict:
+        nonlocal call_count
+        call_count += 1
+        raise ToolExecutionError("temporary outage", retryable=True)
+
+    executor = executor_for(
+        ToolDefinition(
+            name="always_retryable",
+            description="测试重试耗尽",
+            arguments_model=DiscountArgs,
+            result_model=DiscountResult,
+            handler=always_retryable,
+            max_retries=1,
+        )
+    )
+
+    result = executor.execute(
+        ToolCall(
+            call_id="8",
+            name="always_retryable",
+            arguments={"price": 10, "percent": 0},
+        )
+    )
+
+    assert not result.ok
+    assert result.attempts == 2
+    assert call_count == 2
+    assert result.error is not None
+    assert result.error.retryable
+
+
+def test_unexpected_error_message_preserves_type_and_original_text() -> None:
+    """普通异常的结构化消息应保留异常类型和原始文本，便于 Trace 诊断。"""
+
+    def value_error_handler(args: DiscountArgs) -> dict:
+        raise ValueError("value handler failed")
+
+    executor = executor_for(
+        ToolDefinition(
+            name="value_error_handler",
+            description="测试错误诊断信息",
+            arguments_model=DiscountArgs,
+            result_model=DiscountResult,
+            handler=value_error_handler,
+        )
+    )
+
+    result = executor.execute(
+        ToolCall(
+            call_id="9",
+            name="value_error_handler",
+            arguments={"price": 10, "percent": 0},
+        )
+    )
+
+    assert not result.ok
+    assert result.attempts == 1
+    assert result.error is not None
+    assert result.error.code == ToolErrorCode.EXECUTION_FAILED
+    assert not result.error.retryable
+    assert "ValueError" in result.error.message
+    assert "value handler failed" in result.error.message

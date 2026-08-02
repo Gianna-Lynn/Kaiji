@@ -26,7 +26,7 @@ live test 会明确跳过。若环境变量仍然存在，则全量测试会真�
 Set-Location F:\Repositories\Azusa
 git switch solution/kaiji-semantic-gateway
 Set-Location rag
-& $py run_kaiji_gateway.py --port 38117
+& $py run_kaiji_gateway.py --port 38117 --embedding-path tests/fixtures/kaiji_gateway_embedding.jsonl
 ```
 
 人完成 Azusa 练习时，把上面的分支换成 `todo/kaiji-semantic-gateway`；只有该练习分支
@@ -45,9 +45,10 @@ $env:AZUSA_GATEWAY_URL = 'http://127.0.0.1:38117'
 & $py -m pytest -q tests/test_azusa_live_integration.py
 ```
 
-该回归使用 Azusa 现有 `embedding.jsonl` 和真实 BM25 检索，随后按返回的 chunk id 再取
-完整证据，验证两次响应正文一致。TODO 12 的验收输出必须是 `1 passed`；如果显示
-`skipped`，只说明离线课程没有被阻塞，不表示跨仓库对接已经完成。
+该回归使用 Azusa 教学分支受 Git 跟踪的最小 Embedding fixture 和真实 BM25 检索，随后按
+返回的 chunk id 再取完整证据，验证两次响应正文一致。它不依赖本机被忽略的
+`output/artifacts/embedding.jsonl`，新 clone 也能复现。TODO 12 的验收输出必须是
+`1 passed`；如果显示 `skipped`，只说明离线课程没有被阻塞，不表示跨仓库对接已经完成。
 
 ## 1. 原生 Tool Agent
 
