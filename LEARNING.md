@@ -148,7 +148,10 @@ python -m pytest tests/test_executor.py -k 'unknown or arguments'
 ```
 
 完成后应能解释：为什么“没有真正调用 handler”不能算一次 attempt？
-答: 一次attempt精确对应于一次工具的执行.执行可能调用外部API, 写数据库, 进行模型推理等, 代价很高. 而在handler运行之前对参数的校验行为属于内存中的类型比对,代价很低. 因此attempt只负责记录网络超时这样"有资格重试"的动作, 不负责记录参数写错这样的"没有资格重试"的动作, 让调用者可以明确区分.
+答:
+attempt 表示一次真正发起 handler 的执行尝试。执行器会先查找工具并校验参数；如果工具不存在，或者参数校验失败，流程会在 handler 调用之前结束，因此没有产生任何 attempt，attempts 应为 0。
+一旦参数校验成功并进入 handler 执行阶段，即使 handler 最后超时、抛出不可重试异常，或者返回了非法结果，这次也已经算一次 attempt。attempts 只表示实际执行了多少轮，不表示成功次数，也不表示是否允许重试。
+是否继续执行下一轮由 retryable 单独决定。未知工具和参数错误通常不可重试；暂时性网络错误或超时可能允许重试。两者的职责不同：attempts 记录执行次数，retryable 决定失败后是否继续。
 
 #### TODO 3：执行、结果校验与有界重试
 
@@ -167,6 +170,16 @@ python -m pytest tests/test_executor.py
 ```
 
 完成后应能画出：第一次失败 → 是否可重试 → 第二次尝试 → 成功或停止。
+
+答:
+尝试一次
+├─ 成功且输出合法 → success
+├─ 超时 → 有额度则重试
+├─ ToolExecutionError
+│  ├─ retryable → 有额度则重试
+│  └─ 不可重试 → stop
+├─ 输出 ValidationError → stop
+└─ 未预期异常 → stop
 
 #### TODO 4：原生 Agent Loop
 
@@ -193,6 +206,45 @@ python -m pytest tests/test_registry.py tests/test_executor.py tests/test_runtim
 ```
 
 此时人应该能脱离代码解释完整 Tool Agent Loop。
+答:
+
+run(question)
+├─ 初始化：message_list=[user], trace_list=[], successful_tool_results=[], seen_call_signatures=set()
+│
+└─ for step in 1..max_steps
+    │
+    ├─ model_action = decide(message_list)      ← 每轮先让模型决策
+    ├─ trace += model_action                    ← 记录模型动作
+    │
+    ├─ kind == "final_answer"?
+    │   ├─ final_answer is None ──→ raise ValueError
+    │   ├─ trace += stop(COMPLETED)
+    │   └─ return COMPLETED                     ← 出口①
+    │
+    ├─ kind == "tool_call"?
+    │   ├─ tool_call is None ──→ raise RuntimeError
+    │   ├─ 生成 signature(name+arguments)
+    │   ├─ signature ∈ seen?
+    │   │   ├─ trace += stop(DUPLICATE_CALL)
+    │   │   └─ return DUPLICATE_CALL            ← 出口②
+    │   ├─ seen += signature
+    │   ├─ messages += assistant(tool_call)
+    │   ├─ tool_result = executor.execute(tool_call)
+    │   ├─ tool_result is None ──→ raise ValueError
+    │   ├─ trace += tool_result
+    │   ├─ messages += tool(tool_result)
+    │   │
+    │   ├─ tool_result.ok?
+    │   │   ├─ 是 → successful_tool_results += tool_result → 回到循环头
+    │   │   └─ 否 → trace += stop(TOOL_FAILED)
+    │   │            └─ return TOOL_FAILED      ← 出口③
+    │   │
+    ├─ 其他 kind ──→ raise ValueError
+    │
+    └─ 循环自然耗尽
+        ├─ trace += stop(MAX_STEPS)
+        └─ return MAX_STEPS                     ← 出口④
+
 
 ### 第二站：理解框架究竟替你做了什么
 

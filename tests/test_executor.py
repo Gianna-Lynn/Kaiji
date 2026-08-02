@@ -15,12 +15,14 @@ from kaiji.tools import (
 
 
 def executor_for(definition: ToolDefinition) -> ToolExecutor:
+    """用单个工具定义快速构造 ToolExecutor，减少测试样板代码。"""
     registry = ToolRegistry()
     registry.register(definition)
     return ToolExecutor(registry)
 
 
 def test_unknown_tool_is_structured_and_not_attempted() -> None:
+    """工具名不存在时返回 UNKNOWN_TOOL，且 attempts=0 表示未实际执行。"""
     result = ToolExecutor(ToolRegistry()).execute(
         ToolCall(call_id="1", name="missing", arguments={})
     )
@@ -33,6 +35,7 @@ def test_unknown_tool_is_structured_and_not_attempted() -> None:
 
 
 def test_arguments_are_validated_before_handler_runs() -> None:
+    """参数不合法时直接返回 INVALID_ARGUMENTS，不应触发 handler 执行。"""
     called = False
 
     def handler(args: BaseModel) -> dict:
@@ -65,6 +68,7 @@ def test_arguments_are_validated_before_handler_runs() -> None:
 
 
 def test_retryable_failure_recovers_after_one_retry() -> None:
+    """可重试失败在第一次失败后重试成功，attempts=2 表示 handler 被调用了两次。"""
     attempts = 0
 
     def flaky_handler(args: DiscountArgs) -> dict:
@@ -99,6 +103,7 @@ def test_retryable_failure_recovers_after_one_retry() -> None:
 
 
 def test_non_retryable_failure_stops_immediately() -> None:
+    """不可重试失败直接返回，即使还有重试次数也不再继续，attempts=1。"""
     def broken_handler(args: DiscountArgs) -> dict:
         raise ToolExecutionError("permission denied", retryable=False)
 
@@ -127,6 +132,7 @@ def test_non_retryable_failure_stops_immediately() -> None:
 
 
 def test_invalid_tool_output_never_becomes_success() -> None:
+    """handler 返回不符合 result_model 的数据时，返回 INVALID_RESULT 而非成功。"""
     executor = executor_for(
         ToolDefinition(
             name="bad_output",
@@ -151,6 +157,7 @@ def test_invalid_tool_output_never_becomes_success() -> None:
 
 
 def test_timeout_is_structured_and_respects_retry_policy() -> None:
+    """handler 超时时返回 TIMEOUT 且标记为可重试，max_retries=0 时 attempts=1。"""
     def slow_handler(args: DiscountArgs) -> dict:
         time.sleep(0.05)
         return {"final_price": args.price}

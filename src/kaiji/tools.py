@@ -169,66 +169,65 @@ class ToolExecutor:
         """执行已准备的调用，校验输出，并应用有界重试策略。"""
         # TODO 3：
         # - max_tries 等于 max_retries + 1。
-        # - 在尝试循环内部调用 _invoke_with_timeout。
+        # - 在尝试循环内部调用 _invoke_with_timeout。真正调用了一次, attempt次数加一.
         # - 返回成功前用 definition.result_model 校验原始输出。
         # - TIMEOUT 和 retryable=True 的 ToolExecutionError 可以重试。
         # - ValidationError 与未预期的 Exception 不可重试。
         # - 遇到不可重试失败或耗尽次数时立即停止。
         
-        max_tries = definition.max_retries + 1 # 最多允许重试次数是max_retries, 最多允许尝试次数是max_tries
-        for cnt in range(max_tries):
-            # 这里cnt程序上从0开始计数, 但是语义上从1开始计数.
+        max_tries = definition.max_retries + 1 # 最多允许尝试次数max_tries = 最多允许重试次数是max_retries + 1
+        for cnt in range(1, max_tries + 1):    # cnt的语义是"第几次尝试", 从1开始, 最大合法值是max_tries
             try:
-                raw_result = self._invoke_with_timeout(
-                    definition=definition, 
+                raw_result = self._invoke_with_timeout( # 真正调用了一次_invoke_with_timeout的时候, attempt次数就加一, 无论成功失败.
+                    definition=definition,  
                     arguments=arguments,
                 )
+                validated_result = definition.result_model.model_validate(raw_result)
                 # 这里的raw_result是由handler生成的原始结果, 属于Any类型. 
                 # 根据调用工具的不同, raw_result可能形如 {"final_price": 90} , {"display_name": "..."}  , 
-                # 需要交给工具输出结果的模式类result_model来判定raw_result是不是合法.
-                # 如果合法, validated_result是BaseModel类的一个实例, final_price是这个类的一个类成员, 可以用validated_result.final_price来访问, 读出来是90.
-                # 但是validated_result本身并不是字典, 不允许这样访问: validated_result["final_price"]  ,会报TypeError
-                validated_result = definition.result_model.model_validate(raw_result)
-
-                # 调用工具成功时, 尝试次数等于循环标记cnt + 1, 并结束循环.
+                # 需要交给工具输出结果的模式类result_model来判定raw_result是不是合法. 
+                # 如果合法, 生成校验后的结果 validated_result. 如果不合法, 抛出各种类型的error.
+                # validated_result是BaseModel类的一个实例, final_price是这个类的一个类变量, 可以用validated_result.final_price来访问, 读出来是90.
+                # 但是validated_result本身并不是字典, 不允许这样访问: validated_result["final_price"] ,会报TypeError
+                
                 return ToolResult(
                     call_id=call.call_id, 
                     tool_name=definition.name,
                     ok=True,
                     error=None,
-                    attempts=cnt + 1,
+                    attempts=cnt,
                     output=validated_result.model_dump(mode='json'), 
                     # 注意要用output传出结果,不能只传出状态就了事. 
                     # 结果是一个字典. BaseModel.model_dump()会把BaseModel转为字典[str, Any]
                     # BaseModel.model_dump()默认保持Python对象的精度, 会把数字保存为Decimal.
                     # 但是本实验要求把结果用JSON序列化后, 存到output交给LLM读取, 因此需要把数字保存为字符串.
                     # 可以给BaseModel.model_dump()添加一个参数mode='json'.
-                    # 这样做会把Decimal变成字符串, 普通int和float是JSON数字.
+                    # 这样做会把Decimal变成字符串, 但普通int和float是JSON数字.
                 )
             except FutureTimeoutError as e:
                 # 工具调用等待时间耗尽: 可重试, 若尝试次数耗尽, 就返回
-                if cnt == max_tries - 1:
+                if cnt == max_tries:
                     return self._failure(
                         call=call,
                         code=ToolErrorCode.TIMEOUT,
                         message= f"[{type(e).__name__}] {str(e)},工具调用等待时间耗尽",
                         retryable=True, # retryable表示的是FutureTimeoutError是否允许重试. 超时这种错误允许重试.
-                        attempts=cnt + 1,
+                        attempts=cnt,
                     )
             except ToolExecutionError as e:
                 # 工具调用失败: 取决于e.retryable, 查看是否允许重试. 另外, 若尝试次数耗尽, 就返回
-                if not e.retryable or cnt == max_tries - 1:
+                if not e.retryable or cnt == max_tries:
                     return self._failure(
                         call=call,
                         code=ToolErrorCode.EXECUTION_FAILED,
                         message= f"[{type(e).__name__}] {str(e)}, 工具调用失败",
                         retryable=e.retryable,    
-                        attempts=cnt + 1
+                        attempts=cnt
                         # retryable表示的是这一种错误是否允许重试. 
                         # 工具调用失败这种错误可能存在多种情况: 
                         # 服务限流, e.retryable == True, 等一会儿再试可能调用成功.
                         # 用户非法, e.retryable == False, 再试一百次, 用户依旧非法, 不可能调用成功.
-                        # 因此不能再这里给retryable赋值. 工具自己抛出的ToolExecutionError是自定义类, 
+                        # 因此不能在这里给retryable赋值. 工具自己抛出的ToolExecutionError是自定义类, 
                         # 已经带有.retryable标记, 直接拿来输入错误处理函数_failure即可. 
                         # ToolExecutionError.retryable是这一类错误本身的属性.
                     )
@@ -239,7 +238,7 @@ class ToolExecutor:
                     code=ToolErrorCode.INVALID_RESULT,
                     message=f"[{type(e).__name__}] {str(e)}, 工具返回的数据格式错误",
                     retryable=False, # retryable表示的是ValidationError是否允许重试. 这种错误属于数据格式错误, 不允许重试.
-                    attempts=cnt + 1,
+                    attempts=cnt,
                 )
             except Exception as e:
                 # 其他任何没有预料到的错误, 不允许重试.
@@ -247,9 +246,9 @@ class ToolExecutor:
                     call=call,
                     code=ToolErrorCode.EXECUTION_FAILED,
                     message= f"[{type(e).__name__}] {str(e)}, 工具调用出现了其他失败类型",
-                    # retryable=e.retryable, # retryable是ToolExecutionError的自定义字段,而不是Exception拥有的字段, 这么写会抛Attribute Error
+                    # retryable=e.retryable, # retryable是ToolExecutionError的自定义字段, 普通Exception并不拥有这个字段, 这么写会抛Attribute Error
                     retryable=False, # 未预期的异常,不允许重试.
-                    attempts=cnt + 1,
+                    attempts=cnt,
                 )
         #endfor
         raise AssertionError("尝试调用工具的循环必须返回结果") # 显式标记理论上不可到达的结尾.这一断言说明循环中一定会返回
@@ -265,15 +264,17 @@ class ToolExecutor:
     ) -> Any:
         """
         把一个工具函数丢到单独线程里运行，最多等待指定时间，然后把工具的原始返回值交还给上层校验。
-        参数说明:  
-        - arguments: BaseModel 是某个Pydantic输入模型的实例, 可能带有具体的数值.  
-        返回值说明:  
+        - 参数说明:  
+        arguments: BaseModel 是某个Pydantic输入模型的实例, 可能带有具体的数值.  
+        - 返回值说明:  
         返回值是Any, 因为注册表中可能存在完全不同的工具, 例如:  
         折扣工具 -> {"final_price": 90}  
         搜索工具 -> {"matches": [...]}  
         用户工具 -> {"display_name": "..."}  
-        handler会返回的结构无法事先确定, 因此被声明为Callable[[BaseModel], Any], 表示它: 是一个可调用对象, 接收Pydantic参数对象, 返回任意原始数据.  
-        返回的原始数据raw_result, 需要经过 BaseModel类提供的model_validate(raw_result)方法进行校验, 通过校验后才能成为成功的工具结果.
+        handler会返回的结构无法事先确定, 因此被声明为Callable[[BaseModel], Any], 
+        表示它: 是一个可调用对象, 接收Pydantic参数对象, 返回任意原始数据.  
+        返回的原始数据raw_result, 需要经过 BaseModel类 提供的model_validate(raw_result)方法进行校验, 
+        通过校验后才能成为成功的工具结果.
         """
         pool = ThreadPoolExecutor(max_workers=1, thread_name_prefix=definition.name)
         # ThreadPoolExecutor是标准库提供的线程池。max_workers=1表示这个线程池最多同时运行一个任务.这里每次调用都会建立一个临时线程池，只用来运行当前工具。
@@ -281,27 +282,23 @@ class ToolExecutor:
         
         future = pool.submit(definition.handler, arguments)
         # pool.submit 等价于要求线程池执行：definition.handler(arguments)
-        # submit()不会直接返回工具结果，而是立刻返回一个 Future。
-        # Future 可以理解成“未来才会完成的结果盒子”：Future[Any].
-        # 因为 handler 返回 Any，所以这里推导出的类型是 Future[Any]。可能处于正在执行/ 已成功，内部保存返回值/ 已失败，内部保存异常；/ 已取消 这些状态.
+        # submit()不会等待工具结果生成完毕，而是立刻返回一个 Future。
+        # Future 可以理解成“未来才会完成的结果盒子”：Future[Any]. Future是泛型: Future[xx]可以是Future[str], Future[int], Future[dict]等.
+        # 因为 handler 返回 Any，所以这里推导出的类型是 Future[Any]。
+        # Future 可能处于四种状态：正在执行、已成功（内部保存返回值）、已失败（内部保存异常）、已取消。
 
         try:
             return future.result(timeout=definition.timeout_seconds)
-            # 超时表示Runtime停止了等待, 但是已经开始执行的handler可能还在后台继续运行.比如扣款, 删除文件等敏感操作.
+            # 超时表示Runtime(当前线程, 等待者)停止了等待, 但是已经开始执行的handler可能还在后台继续运行.比如扣款, 删除文件等敏感操作.
             # 对于这些工具不能因为外层超时就直接安全重试, 否则可能出现第一次调用未结束的时候第二次调用就启动.
             # TODO: 增加幂等键/工具自身超时/可取消机制.
 
-        
-            # 等待线程中的handler完成.
-            # 可能出现三种结果：
-            # 工具按时成功： return {"final_price": 90}
-            # future.result() 就返回这个字典。
-            # 工具自身抛出异常：raise ToolExecutionError("服务暂时不可用", retryable=True)
-            # future.result() 会在当前线程重新抛出这个异常。
-            # 等待时间耗尽：FutureTimeoutError
-            # 这个异常应当由外层 _execute_with_retry() 捕获，并转换为：
-            # ToolErrorCode.TIMEOUT
-            # retryable=True
+            # future.result()等待线程中的handler完成, 并返回三种结果中的一种:
+            # 1. 工具按时成功： return {"final_price": 90} ,返回工具执行后的结果, 也就是这个字典。
+            # 2. 工具自身抛出异常：raise ToolExecutionError("服务暂时不可用", retryable=True). _invoke_with_timeout会将这个异常传递给外层_execute_with_retry()
+            # 3. 等待时间耗尽：raise FutureTimeoutError, 传递给外层 _execute_with_retry() 捕获.
+            #    等待时间耗尽, 指的是在单次试图调用的时候, 工具无响应, 等待时间耗尽. 当下一次试图调用的时候, 可能成功, 允许重试, 
+            #    因此外层_execute_with_retry设置为retryable=True.
 
         finally:
             pool.shutdown(wait=False, cancel_futures=True)
@@ -319,6 +316,7 @@ class ToolExecutor:
         retryable: bool,
         attempts: int,
     ) -> ToolResult:
+        """构造失败路径的 ToolResult，避免各处重复手写相同的失败结构。"""
         return ToolResult(
             call_id=call.call_id,
             tool_name=call.name,

@@ -80,7 +80,7 @@ class ToolResult(BaseModel):
 class Message(BaseModel):
     """表示用户、助手或工具在一次对话中的消息。"""
 
-    role: Literal["user", "assistant", "tool"]
+    role: Literal["user", "assistant", "tool"] # Literal 把 role 的类型限定为这三个精确的字符串值.
     content: str
     tool_result: ToolResult | None = None
 
