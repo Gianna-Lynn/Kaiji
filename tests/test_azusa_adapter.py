@@ -56,6 +56,8 @@ def test_registry_exposes_two_precise_argument_schemas_and_retry_policy() -> Non
     schemas = {schema["name"]: schema for schema in registry.schemas()}
 
     assert set(schemas) == {"search_azusa", "get_chunk_by_id"}
+    assert "证据" in schemas["search_azusa"]["description"]
+    assert "证据" in schemas["get_chunk_by_id"]["description"]
 
     search_parameters = schemas["search_azusa"]["parameters"]
     assert search_parameters["required"] == ["query"]
@@ -82,6 +84,13 @@ def test_registry_exposes_two_precise_argument_schemas_and_retry_policy() -> Non
     assert chunk_definition.arguments_model is GetChunkArgs
     assert chunk_definition.result_model is ChunkResponse
     assert chunk_definition.max_retries == 1
+
+    search_output = search_definition.handler(SearchAzusaArgs(query="Kaiji"))
+    chunk_output = chunk_definition.handler(GetChunkArgs(chunk_id="kaiji-001"))
+    assert type(search_output) is dict
+    assert type(chunk_output) is dict
+    assert search_output["mode"] == "hybrid"
+    assert chunk_output["chunk_id"] == "kaiji-001"
 
 
 def test_semantic_http_adapter_uses_exact_search_contract_and_maps_fields() -> None:

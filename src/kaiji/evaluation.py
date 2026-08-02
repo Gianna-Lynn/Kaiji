@@ -97,18 +97,6 @@ class EvalReport(BaseModel):
 EvalItem = TypeVar("EvalItem", EvalCase, EvalObservation)
 
 
-def load_cases(path: Path) -> list[EvalCase]:
-    """从 JSONL 文件加载用例，并拒绝重复的 ``case_id``。"""
-
-    cases = [
-        EvalCase.model_validate_json(line)
-        for line in path.read_text(encoding="utf-8").splitlines()
-        if line.strip()
-    ]
-    _index_by_unique_case_id(cases, "评测用例")
-    return cases
-
-
 def _index_by_unique_case_id(
     items: list[EvalItem],
     label: str,
@@ -125,6 +113,18 @@ def _index_by_unique_case_id(
         duplicate_text = ", ".join(sorted(duplicates))
         raise ValueError(f"{label}的 case_id 必须唯一，重复项: {duplicate_text}")
     return result
+
+
+def load_cases(path: Path) -> list[EvalCase]:
+    """从 JSONL 文件加载用例，并拒绝重复的 ``case_id``。"""
+
+    cases = [
+        EvalCase.model_validate_json(line)
+        for line in path.read_text(encoding="utf-8").splitlines()
+        if line.strip()
+    ]
+    _index_by_unique_case_id(cases, "评测用例")
+    return cases
 
 
 def _rate(values: list[bool]) -> float:

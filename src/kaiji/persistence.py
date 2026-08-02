@@ -56,6 +56,27 @@ class JsonCheckpointStore:
 
         self._path = path
 
+    def _read_all(self) -> dict[str, dict[str, dict[str, Any]]]:
+        """读取全部检查点，并校验线程外壳与每个 ``state`` 都是对象。"""
+
+        payload = _read_json_object(self._path, label="Checkpoint")
+        checkpoints_by_thread: dict[str, dict[str, dict[str, Any]]] = {}
+        for thread_id, checkpoints in payload.items():
+            if not isinstance(checkpoints, dict):
+                raise ValueError(
+                    f"Checkpoint 线程 {thread_id!r} 的内容必须是对象"
+                )
+            validated_checkpoints: dict[str, dict[str, Any]] = {}
+            for checkpoint_id, state in checkpoints.items():
+                if not isinstance(state, dict):
+                    raise ValueError(
+                        "Checkpoint state 必须是对象: "
+                        f"{thread_id!r}/{checkpoint_id!r}"
+                    )
+                validated_checkpoints[checkpoint_id] = state
+            checkpoints_by_thread[thread_id] = validated_checkpoints
+        return checkpoints_by_thread
+
     def save(self, checkpoint: Checkpoint) -> None:
         """保存或覆盖快照，并把它标记为该线程最后一次成功保存。"""
 
@@ -94,28 +115,6 @@ class JsonCheckpointStore:
             state=checkpoints[checkpoint_id],
         )
 
-    def _read_all(self) -> dict[str, dict[str, dict[str, Any]]]:
-        """读取全部检查点，并校验线程外壳与每个 ``state`` 都是对象。"""
-
-        payload = _read_json_object(self._path, label="Checkpoint")
-        checkpoints_by_thread: dict[str, dict[str, dict[str, Any]]] = {}
-        for thread_id, checkpoints in payload.items():
-            if not isinstance(checkpoints, dict):
-                raise ValueError(
-                    f"Checkpoint 线程 {thread_id!r} 的内容必须是对象"
-                )
-            validated_checkpoints: dict[str, dict[str, Any]] = {}
-            for checkpoint_id, state in checkpoints.items():
-                if not isinstance(state, dict):
-                    raise ValueError(
-                        "Checkpoint state 必须是对象: "
-                        f"{thread_id!r}/{checkpoint_id!r}"
-                    )
-                validated_checkpoints[checkpoint_id] = state
-            checkpoints_by_thread[thread_id] = validated_checkpoints
-        return checkpoints_by_thread
-
-
 class MemoryEntry(BaseModel):
     """表示由应用策略筛选后允许长期保存的一条事实。"""
 
@@ -136,6 +135,23 @@ class JsonMemoryStore:
         """指定长期事实 JSON 文件的位置。"""
 
         self._path = path
+
+    def _read_all(self) -> dict[str, dict[str, Any]]:
+        """读取全部长期事实，并校验用户外壳、记录 Schema 与内外键一致性。"""
+
+        payload = _read_json_object(self._path, label="Memory")
+        entries_by_user: dict[str, dict[str, Any]] = {}
+        for user_id, entries in payload.items():
+            if not isinstance(entries, dict):
+                raise ValueError(f"Memory 用户 {user_id!r} 的内容必须是对象")
+            validated_entries: dict[str, Any] = {}
+            for key, raw_entry in entries.items():
+                entry = MemoryEntry.model_validate(raw_entry)
+                if entry.key != key:
+                    raise ValueError("Memory 存储键与记录中的 entry.key 不一致")
+                validated_entries[key] = entry.model_dump()
+            entries_by_user[user_id] = validated_entries
+        return entries_by_user
 
     def put(self, user_id: str, entry: MemoryEntry) -> None:
         """按用户和键保存或覆盖一条长期事实。"""
@@ -165,20 +181,3 @@ class JsonMemoryStore:
                 raise ValueError("Memory 存储键与记录中的 entry.key 不一致")
             entries.append(entry)
         return entries
-
-    def _read_all(self) -> dict[str, dict[str, Any]]:
-        """读取全部长期事实，并校验用户外壳、记录 Schema 与内外键一致性。"""
-
-        payload = _read_json_object(self._path, label="Memory")
-        entries_by_user: dict[str, dict[str, Any]] = {}
-        for user_id, entries in payload.items():
-            if not isinstance(entries, dict):
-                raise ValueError(f"Memory 用户 {user_id!r} 的内容必须是对象")
-            validated_entries: dict[str, Any] = {}
-            for key, raw_entry in entries.items():
-                entry = MemoryEntry.model_validate(raw_entry)
-                if entry.key != key:
-                    raise ValueError("Memory 存储键与记录中的 entry.key 不一致")
-                validated_entries[key] = entry.model_dump()
-            entries_by_user[user_id] = validated_entries
-        return entries_by_user

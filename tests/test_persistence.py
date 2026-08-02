@@ -14,6 +14,26 @@ from kaiji.persistence import (
 )
 
 
+def test_checkpoint_read_boundary_is_independently_verifiable(tmp_path) -> None:
+    """TODO 8a 可在尚未实现 save/load/latest 时独立验收。"""
+
+    path = tmp_path / "checkpoints.json"
+    store = JsonCheckpointStore(path)
+    assert store._read_all() == {}
+
+    valid = {"thread-1": {"cp-1": {"step": 1}}}
+    path.write_text(json.dumps(valid), encoding="utf-8")
+    assert store._read_all() == valid
+
+    for corrupt in (
+        {"thread-1": None},
+        {"thread-1": {"cp-1": None}},
+    ):
+        path.write_text(json.dumps(corrupt), encoding="utf-8")
+        with pytest.raises(ValueError):
+            store._read_all()
+
+
 def test_checkpoint_save_load_round_trips_full_nested_state(tmp_path) -> None:
     path = tmp_path / "checkpoints.json"
     state = {
@@ -244,6 +264,43 @@ def test_memory_put_get_round_trips_value_and_tags_across_store_instances(
     restored = JsonMemoryStore(path).get("user-1", "preferred_mode")
 
     assert restored == entry
+
+
+def test_memory_read_boundary_is_independently_verifiable(tmp_path) -> None:
+    """TODO 9a 可在尚未实现 put/get/list 时独立验收。"""
+
+    path = tmp_path / "memory.json"
+    store = JsonMemoryStore(path)
+    assert store._read_all() == {}
+
+    valid = {
+        "user-1": {
+            "preferred_mode": {
+                "key": "preferred_mode",
+                "value": "hybrid",
+                "tags": ["preference"],
+            }
+        }
+    }
+    path.write_text(json.dumps(valid), encoding="utf-8")
+    assert store._read_all() == valid
+
+    for corrupt in (
+        {"user-1": None},
+        {"user-1": {"preferred_mode": None}},
+        {
+            "user-1": {
+                "outer-key": {
+                    "key": "inner-key",
+                    "value": "hybrid",
+                    "tags": [],
+                }
+            }
+        },
+    ):
+        path.write_text(json.dumps(corrupt), encoding="utf-8")
+        with pytest.raises(ValueError):
+            store._read_all()
 
 
 def test_memory_replace_failure_preserves_previous_file(

@@ -67,6 +67,11 @@ Azusa：
 | `todo/kaiji-semantic-gateway` | 人完成语义网关 TODO |
 | `solution/kaiji-semantic-gateway` | 可运行的语义网关答案 |
 
+同一 Python 环境的 editable install 只能指向一个工作树。在 Kaiji 答案 worktree 运行
+`python -m kaiji.*` 前，应临时把该 worktree 的 `src` 放入 `PYTHONPATH`，并打印
+`kaiji.__file__` 确认没有误载 main；具体命令见 `docs/curriculum.md`。回到 main 后清除
+该临时变量，避免答案代码越过 TODO。这条检查尤其重要：命令成功不等于导入来源正确。
+
 日常学习始终留在 Kaiji `main`。不要为了看答案直接把 solution 分支合并进 main。
 
 卡住时，先只查看一个文件的差异：
@@ -281,6 +286,16 @@ StructuredTool 必须直接复用 `SearchAzusaArgs`，而不是另造一份相�
 - 用非法 Adapter 输出证明结构化输出校验确实生效；
 - 分别验证成功和失败 Callback。
 
+练习按依赖顺序实现：**5a Message 映射 → 5b StructuredTool → 5c 两阶段
+Runnable**。5c 会调用 5b 的工具；测试会用 monkeypatch 单独隔离 5c，因此某条 5c
+测试越过尚未完成的 5b 是有意的单元隔离，不代表 5b 已经通过。
+
+```powershell
+python -m pytest tests/test_langchain_compare.py -k message
+python -m pytest tests/test_langchain_compare.py -k structured_tool
+python -m pytest tests/test_langchain_compare.py -k runnable
+```
+
 本课非目标是实现完整的 LangChain 模型 Tool Calling，也不把超时、重试或权限责任
 交给框架。工具边界仍由 Kaiji Adapter、Schema 和 Executor 决定。组合 Runnable
 可能让同一个 Callback 在不同嵌套层各收到事件，因此本课只要求成功链出现 start/end、
@@ -425,6 +440,16 @@ metadata 恢复 `chunk_id`，再用注入的 resolver 恢复正文。encoder 必
 以及 `chunk_id` 都不能被 handler 硬编码替换。search 和 get_chunk 的
 `AzusaAdapterError.retryable` 都必须传入 `ToolExecutionError`，不能只修其中一个。
 
+练习按编号推进：**7a 语义搜索 HTTP 边界 → 7b 按 ID 取证据 → 7c Legacy 兼容转换 →
+7d Registry 工具接线**。7a 与 7b 共用错误分类但各自需要测试；7d 位于最后，因为它要
+把已经稳定的 Adapter 方法接入 Executor，而不是在 handler 内重新实现网络逻辑。
+
+```powershell
+python -m pytest tests/test_azusa_adapter.py -k semantic_http
+python -m pytest tests/test_azusa_adapter.py -k legacy
+python -m pytest tests/test_azusa_adapter.py -k registry
+```
+
 ```powershell
 python -m pytest tests/test_azusa_adapter.py
 ```
@@ -449,7 +474,12 @@ Checkpoint 是一次执行的完整恢复快照。JSON 第一层按 `thread_id` 
 写入采用同目录临时文件再 `replace` 目标；测试会模拟替换失败，确认旧文件和旧
 `latest()` 不受影响。多进程锁、冲突合并和崩溃后临时文件清扫不属于本课范围。
 
+练习按真实依赖顺序实现：**8a `_read_all()` 严格读取 → 8b `save()` 原子保存 →
+8c `load()` 指定恢复 → 8d `latest()` 最近恢复**。后三个方法都复用 8a；不要按调用
+入口的熟悉程度先写 `save()`，否则会被尚未建立的存储边界阻塞。
+
 ```powershell
+python -m pytest tests/test_persistence.py -k checkpoint_read_boundary
 python -m pytest tests/test_persistence.py -k checkpoint
 ```
 
@@ -472,7 +502,12 @@ Memory 同样严格区分“键不存在”和“键存在但记录损坏”：J
 校验已有 Store；不能借一次看似成功的新写入，把旧损坏静默保留下去。Memory 与
 Checkpoint 共用同目录临时文件再 `replace` 的原子写入边界，替换失败时旧文件不变。
 
+练习同样从读取边界开始：**9a `_read_all()` 全量校验 → 9b `put()` → 9c `get()` →
+9d `list()`**。这样写入、单条读取和列表读取会共享同一套损坏数据结论，不会各自长出
+三种互相矛盾的解析规则。
+
 ```powershell
+python -m pytest tests/test_persistence.py -k memory_read_boundary
 python -m pytest tests/test_persistence.py -k memory
 ```
 
@@ -583,6 +618,11 @@ P50/P95 使用排序后的 nearest-rank 定义。所有计数和延迟不得为�
 `run_eval(cases, runner)` 才是真实 runner 的注入点。把统一 Runtime、LangGraph、
 Checkpoint 和 Memory 场景接入同一个真实黑盒 runner 属于后续 L3 扩展，而不是把金标
 fixture 改名就宣称完成。
+
+练习按依赖顺序实现：**11a Observation 跨字段不变量 → 11b 唯一 ID 索引 →
+11c JSONL 用例加载 → 11d case/observation 严格对齐 → 11e 指标聚合**。11a 的合法样例
+必须继续可构造，所以它不能用无条件 `NotImplementedError` 占位；相应红灯会表现为
+“非法计数组合没有被拒绝”。11b/11c 的重复 ID 红灯同理，是精确契约失败而非测试松散。
 
 ```powershell
 python -m pytest tests/test_evaluation.py

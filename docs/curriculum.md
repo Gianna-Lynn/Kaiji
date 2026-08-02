@@ -41,9 +41,17 @@ git worktree list
 # 若尚未列出，执行下面两行创建并进入示例路径：
 git worktree add F:\Repositories\Kaiji-solution solution/kaiji-v0-full-course
 Set-Location F:\Repositories\Kaiji-solution
+$env:PYTHONPATH = (Join-Path (Get-Location) 'src')
+& $py -c "import kaiji; print(kaiji.__file__)"
 $env:AZUSA_GATEWAY_URL = 'http://127.0.0.1:38117'
 & $py -m pytest -q tests/test_azusa_live_integration.py
 ```
+
+同一个 Conda 环境的 editable install 只能指向一个工作树。pytest 会按本项目配置优先加载
+当前 `src`，但 `python -m kaiji.course_demo` 等普通模块命令可能仍导入此前安装的 main。
+因此在答案 worktree 验收期间临时设置上面的 `PYTHONPATH`，并用打印出的 `kaiji.__file__`
+确认路径确实位于该 worktree；结束后执行 `Remove-Item Env:PYTHONPATH`。这不是代码依赖，
+而是多个工作树共用一个 Python 环境时的来源隔离。
 
 该回归使用 Azusa 教学分支受 Git 跟踪的最小 Embedding fixture 和真实 BM25 检索，随后按
 返回的 chunk id 再取完整证据，验证两次响应正文一致。它不依赖本机被忽略的
