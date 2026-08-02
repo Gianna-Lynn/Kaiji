@@ -11,17 +11,22 @@ GATEWAY_URL = os.getenv("AZUSA_GATEWAY_URL")
 
 pytestmark = pytest.mark.skipif(
     not GATEWAY_URL,
-    reason="set AZUSA_GATEWAY_URL to run the live Azusa integration test",
+    reason=(
+        "TODO 12 未实际执行：请设置 AZUSA_GATEWAY_URL；"
+        "验收时必须看到本测试 passed，skipped 不算完成"
+    ),
 )
 
 
-def test_live_azusa_search_then_get_same_chunk() -> None:
-    """验证真实检索命中与按 ID 回读的证据正文完全一致。"""
+def test_todo12_live_azusa_search_then_get_same_chunk() -> None:
+    """实际运行时验证检索命中与按 ID 回读的证据正文完全一致。"""
+
+    assert GATEWAY_URL
 
     # 第一次真实请求可能导入本地嵌入和重排依赖；即使 BM25 本身只使用
     # CPU，真实联调测试仍需要为冷启动保留足够时间。
     adapter = AzusaHttpAdapter(
-        GATEWAY_URL or "http://127.0.0.1:3010",
+        GATEWAY_URL,
         timeout_seconds=120,
     )
     try:
