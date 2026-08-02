@@ -18,7 +18,7 @@ class SearchAzusaArgs(BaseModel):
 
     query: str = Field(min_length=2)
     k: int = Field(default=3, ge=1, le=20)
-    mode: str = Field(default="hybrid")
+    mode: str = Field(default="hybrid", min_length=1)
 
 
 class GetChunkArgs(BaseModel):
@@ -37,7 +37,9 @@ def build_azusa_registry(adapter: AzusaAdapter) -> ToolRegistry:
 
         parsed = SearchAzusaArgs.model_validate(args)
         try:
-            return adapter.search_azusa(parsed.query, parsed.k, parsed.mode).model_dump()
+            return adapter.search_azusa(
+                parsed.query, parsed.k, parsed.mode
+            ).model_dump(mode="json")
         except AzusaAdapterError as exc:
             raise ToolExecutionError(str(exc), retryable=exc.retryable) from exc
 
@@ -46,7 +48,7 @@ def build_azusa_registry(adapter: AzusaAdapter) -> ToolRegistry:
 
         parsed = GetChunkArgs.model_validate(args)
         try:
-            return adapter.get_chunk_by_id(parsed.chunk_id).model_dump()
+            return adapter.get_chunk_by_id(parsed.chunk_id).model_dump(mode="json")
         except AzusaAdapterError as exc:
             raise ToolExecutionError(str(exc), retryable=exc.retryable) from exc
 

@@ -13,7 +13,18 @@ from kaiji.models import StopReason
 
 
 class AgentState(TypedDict, total=False):
-    """描述 LangGraph 各节点之间共享的运行状态。"""
+    """描述 LangGraph 节点间共享的状态及各字段的唯一职责。
+
+    ``question`` 保存不可变的原始用户问题，``rewritten_query`` 保存当前真正
+    送往 Azusa 的查询。``step_count`` 只统计 search 节点执行次数，也就是
+    检索尝试次数；``retry_count`` 只统计 query rewrite 次数；``max_steps``
+    只限制检索尝试次数，并不统计 router、answer 等其他图节点。
+
+    ``route`` 是 router 选择的下一条边，``evidence`` 是校验后的检索命中，
+    ``error`` 与 ``error_retryable`` 描述最近一次失败。``pending_action``、
+    ``approved`` 分别保存待确认的模拟副作用和人的恢复决定。``answer`` 与
+    ``stop_reason`` 只由终止节点写入，表示对外结果。
+    """
 
     question: str
     rewritten_query: str
@@ -27,11 +38,14 @@ class AgentState(TypedDict, total=False):
     error_retryable: bool
     pending_action: str | None
     approved: bool | None
-    stop_reason: str | None
+    stop_reason: StopReason | None
 
 
 def _initial_state(question: str, *, max_steps: int) -> AgentState:
-    """创建一份边界明确、计数器归零的初始工作流状态。"""
+    """创建计数器归零的初始状态，并拒绝无效检索上限。"""
+
+    if max_steps < 1:
+        raise ValueError("max_steps 必须至少为 1")
 
     return AgentState(
         question=question,
@@ -54,7 +68,12 @@ def build_agent_graph(
     *,
     checkpointer: MemorySaver | None = None,
 ):
-    """构建符合任务书要求、只允许一次恢复且支持人工介入的工作流。"""
+    """构建带检索、一次查询改写、人工确认与线程检查点的工作流。
+
+    工作流只允许一次 query rewrite；是否继续检索同时受 ``retry_count`` 和
+    ``max_steps`` 约束。副作用分支只模拟批准或拒绝，不执行真实外部写操作。
+    ``thread_id`` 由调用入口通过 checkpointer 隔离，本函数不维护全局状态。
+    """
 
     def router(state: AgentState) -> dict:
         """把普通问题送往检索，把模拟副作用送往人工确认。"""
@@ -93,7 +112,12 @@ def build_agent_graph(
             }
 
     def assess(state: AgentState) -> str:
-        """根据证据、步数和错误可重试性选择下一节点。"""
+        """按固定优先级选择搜索后的下一节点。
+
+        优先级依次是：已有证据时回答；无证据且检索次数已达上限时停止；
+        尚有预算、错误可重试且从未改写时改写；其他情况以证据不足停止。
+        因此最后一次检索若得到证据，仍应回答而不是返回 ``MAX_STEPS``。
+        """
 
         if state.get("evidence"):
             return "answer"
@@ -119,7 +143,7 @@ def build_agent_graph(
                 {
                     "kind": "side_effect_confirmation",
                     "action": state["pending_action"],
-                    "question": "Approve this simulated side effect?",
+                    "question": "是否批准这项模拟副作用？",
                 }
             )
         )
@@ -134,7 +158,7 @@ def build_agent_graph(
         """生成模拟操作获批后的终止状态。"""
 
         return {
-            "answer": f"Approved simulated action: {state['pending_action']}",
+            "answer": f"已批准模拟操作：{state['pending_action']}",
             "stop_reason": StopReason.COMPLETED,
         }
 
@@ -147,12 +171,11 @@ def build_agent_graph(
         }
 
     def answer(state: AgentState) -> dict:
-        """仅使用已校验证据生成带引用的最终回答。"""
+        """只使用第一条已校验证据，并仅引用支撑该正文的命中。"""
 
-        citations = [item["chunk_id"] for item in state["evidence"]]
-        text = state["evidence"][0]["text"]
+        evidence = state["evidence"][0]
         return {
-            "answer": f"{text}\nCitations: {', '.join(citations)}",
+            "answer": f"{evidence['text']}\nCitations: {evidence['chunk_id']}",
             "stop_reason": StopReason.COMPLETED,
         }
 
@@ -206,18 +229,19 @@ def build_agent_graph(
     )
     for terminal in ("approved", "rejected", "answer", "failure", "max_steps"):
         graph.add_edge(terminal, END)
-    return graph.compile(checkpointer=checkpointer or MemorySaver())
+    active_checkpointer = checkpointer if checkpointer is not None else MemorySaver()
+    return graph.compile(checkpointer=active_checkpointer)
 
 
 def run_graph(graph, question: str, *, thread_id: str, max_steps: int = 3) -> dict:
-    """以新的线程状态运行工作流。"""
+    """以新线程状态运行工作流；``max_steps`` 表示最多检索次数。"""
 
     config = {"configurable": {"thread_id": thread_id}}
     return graph.invoke(_initial_state(question, max_steps=max_steps), config=config)
 
 
 def resume_graph(graph, *, thread_id: str, approved: bool) -> dict:
-    """使用人工审批结果恢复已暂停的工作流。"""
+    """在同一 ``thread_id`` 上使用人工审批结果恢复暂停点。"""
 
     config = {"configurable": {"thread_id": thread_id}}
     return graph.invoke(Command(resume=approved), config=config)
