@@ -118,9 +118,16 @@ def request_confirmation(state: AgentState) -> dict[str, bool]:
 
 
 def confirmation_route(state: AgentState) -> str:
-    """把已验证的人工决定映射为批准或拒绝分支。"""
+    """严格校验人工决定，并映射为批准或拒绝分支。
 
-    return "approved" if state.get("approved") is True else "rejected"
+    这里既是 Interrupt 恢复后的正常路由，也是被破坏 State 的最后一道防线；
+    非 Python ``bool`` 的值属于内部协议错误，不能伪装成用户拒绝。
+    """
+
+    decision = state.get("approved")
+    if type(decision) is not bool:
+        raise ValueError("人工审批结果必须是 bool")
+    return "approved" if decision else "rejected"
 
 
 def _search(adapter: AzusaAdapter, state: AgentState) -> dict[str, Any]:
@@ -194,7 +201,7 @@ def build_agent_graph(
         }
 
     def max_steps(state: AgentState) -> dict:
-        """在达到最大步数时安全终止。"""
+        """在达到最大检索次数时安全终止。"""
 
         return {
             "answer": None,
