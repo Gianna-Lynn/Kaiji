@@ -117,8 +117,9 @@ class ToolExecutor:
         self._registry = registry
 
     def execute(self, call: ToolCall) -> ToolResult:
-        prepared = self._prepare_call(call)
-        if isinstance(prepared, ToolResult):
+        """一次完整的工具调用流程."""
+        prepared = self._prepare_call(call)  # 查找工具, 校验参数.
+        if isinstance(prepared, ToolResult): # 工具不存在或参数不合法, 直接返回.
             return prepared
 
         definition, arguments = prepared

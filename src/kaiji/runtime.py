@@ -37,7 +37,9 @@ class AgentRuntime:
         self._max_steps = max_steps
 
     def run(self, question: str) -> RunResult:
-        """运行一次问题处理流程；练习版需要补全显式 Agent Loop。"""
+        """运行一次问题处理流程；练习版需要补全显式 Agent Loop。
+        参数说明:
+        question: str 是用户用自然语言提出的问题, 是纯文本字符串."""
         # TODO 4：实现显式 Agent Loop。
         #
         # region: 每一步必须按以下顺序处理：

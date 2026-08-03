@@ -212,6 +212,7 @@ python -m pytest tests/test_registry.py tests/test_executor.py tests/test_runtim
 此时人应该能脱离代码解释完整 Tool Agent Loop。
 答:
 
+```
 run(question)
 ├─ 初始化：message_list=[user], trace_list=[], successful_tool_results=[], seen_call_signatures=set()
 │
@@ -248,6 +249,7 @@ run(question)
     └─ 循环自然耗尽
         ├─ trace += stop(MAX_STEPS)
         └─ return MAX_STEPS                     ← 出口④
+```
 
 
 ### 第二站：理解框架究竟替你做了什么
@@ -258,7 +260,7 @@ run(question)
 
 这一课只比较表达方式，不改变 Kaiji 已经建立的可靠性边界。当前 `Message` 没有
 LangChain 原生的 `tool_calls` 字段，因此这里采用明确的教学用有损映射：
-
+  
 | Kaiji 消息 | LangChain 消息 | 字段契约 |
 |---|---|---|
 | `role="user"` | `HumanMessage` | 原样保留 `content` |
