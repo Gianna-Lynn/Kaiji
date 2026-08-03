@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from copy import deepcopy
+
 import pytest
 from langgraph.checkpoint.memory import MemorySaver
 
@@ -11,7 +13,17 @@ from kaiji.adapters.azusa import (
     SearchHit,
     SearchResponse,
 )
-from kaiji.langgraph_workflow import build_agent_graph, resume_graph, run_graph
+from kaiji.langgraph_workflow import (
+    AgentState,
+    assess_search,
+    build_agent_graph,
+    confirmation_route,
+    request_confirmation,
+    resume_graph,
+    rewrite_query,
+    route_request,
+    run_graph,
+)
 from kaiji.models import StopReason
 
 
@@ -79,6 +91,175 @@ def _interrupt_payload(paused: dict) -> dict:
     interrupts = paused["__interrupt__"]
     assert len(interrupts) == 1
     return interrupts[0].value
+
+
+def _base_state(**overrides: object) -> AgentState:
+    """构造可供纯节点函数测试使用的完整初始状态。"""
+
+    state: AgentState = {
+        "question": "Kaiji",
+        "rewritten_query": "Kaiji",
+        "route": "search",
+        "evidence": [],
+        "answer": None,
+        "retry_count": 0,
+        "step_count": 0,
+        "max_steps": 3,
+        "error": None,
+        "error_retryable": False,
+        "pending_action": None,
+        "approved": None,
+        "stop_reason": None,
+    }
+    state.update(overrides)
+    return state
+
+
+def test_todo_6a_graph_has_explicit_nodes_and_edges() -> None:
+    """6a 只检查图结构，不执行任何节点。"""
+
+    graph = build_agent_graph(MockAzusaAdapter())
+    compiled = graph.get_graph()
+    nodes = set(compiled.nodes)
+    edges = {(edge.source, edge.target) for edge in compiled.edges}
+
+    assert {
+        "router",
+        "search",
+        "rewrite",
+        "confirm",
+        "approved",
+        "rejected",
+        "answer",
+        "failure",
+        "max_steps",
+    } <= nodes
+    assert "todo_6a" not in nodes
+    assert {
+        ("__start__", "router"),
+        ("router", "search"),
+        ("router", "confirm"),
+        ("search", "answer"),
+        ("search", "rewrite"),
+        ("search", "failure"),
+        ("search", "max_steps"),
+        ("rewrite", "search"),
+        ("confirm", "approved"),
+        ("confirm", "rejected"),
+        ("approved", "__end__"),
+        ("rejected", "__end__"),
+        ("answer", "__end__"),
+        ("failure", "__end__"),
+        ("max_steps", "__end__"),
+    } <= edges
+
+
+@pytest.mark.parametrize(
+    ("question", "expected"),
+    [
+        ("Kaiji 是什么？", {"route": "search"}),
+        (
+            "SEND mock report",
+            {"route": "confirm", "pending_action": "SEND mock report"},
+        ),
+    ],
+)
+def test_todo_6b_router_returns_only_its_local_update(
+    question: str, expected: dict[str, str]
+) -> None:
+    """6b 直接验证 Router 的路由和局部 State 更新。"""
+
+    state = _base_state(question=question)
+    before = deepcopy(state)
+
+    assert route_request(state) == expected
+    assert state == before
+
+
+@pytest.mark.parametrize(
+    ("overrides", "expected"),
+    [
+        ({"evidence": [{"chunk_id": "c1"}], "step_count": 3}, "answer"),
+        ({"step_count": 3, "max_steps": 3}, "max_steps"),
+        ({"error_retryable": True, "retry_count": 0}, "rewrite"),
+        ({"error_retryable": True, "retry_count": 1}, "failure"),
+        ({"error_retryable": False}, "failure"),
+    ],
+)
+def test_todo_6c_assess_enforces_priority(
+    overrides: dict[str, object], expected: str
+) -> None:
+    """6c 用手工 State 直接验证条件边优先级。"""
+
+    assert assess_search(_base_state(**overrides)) == expected
+
+
+def test_todo_6d_rewrite_returns_only_local_updates() -> None:
+    """6d 只能更新查询和改写计数，且不得修改输入 State。"""
+
+    state = _base_state(question="原始问题", retry_count=0)
+    before = deepcopy(state)
+
+    result = rewrite_query(state)
+
+    assert set(result) == {"rewritten_query", "retry_count"}
+    assert result["rewritten_query"] != state["question"]
+    assert result["retry_count"] == 1
+    assert state == before
+
+
+def test_todo_6e_confirmation_returns_strict_bool_and_stable_payload(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """6e 验证审批载荷和真正布尔值的局部更新。"""
+
+    captured: list[dict] = []
+
+    def fake_interrupt(payload: dict) -> bool:
+        captured.append(payload)
+        return True
+
+    monkeypatch.setattr("kaiji.langgraph_workflow.interrupt", fake_interrupt)
+
+    result = request_confirmation(
+        _base_state(pending_action="delete mock record")
+    )
+
+    assert result == {"approved": True}
+    assert captured == [
+        {
+            "kind": "side_effect_confirmation",
+            "action": "delete mock record",
+            "question": "是否批准这项模拟副作用？",
+        }
+    ]
+
+
+@pytest.mark.parametrize("decision", ["false", "拒绝", 0, 1, None])
+def test_todo_6e_rejects_non_bool_resume_values(
+    monkeypatch: pytest.MonkeyPatch, decision: object
+) -> None:
+    """字符串、数字和空值不得被转换成审批结果。"""
+
+    monkeypatch.setattr(
+        "kaiji.langgraph_workflow.interrupt",
+        lambda payload: decision,
+    )
+
+    with pytest.raises(ValueError):
+        request_confirmation(_base_state(pending_action="send mock report"))
+
+
+@pytest.mark.parametrize(
+    ("approved", "expected"),
+    [(True, "approved"), (False, "rejected"), (1, "rejected"), ("true", "rejected")],
+)
+def test_todo_6f_confirmation_route_requires_true_bool(
+    approved: object, expected: str
+) -> None:
+    """6f 只把真正的 True 送往批准分支。"""
+
+    assert confirmation_route(_base_state(approved=approved)) == expected
 
 
 def test_graph_answers_with_citation_at_search_limit() -> None:
@@ -274,6 +455,16 @@ def test_graph_resumes_rejection_on_the_same_thread() -> None:
     assert result["approved"] is False
 
 
+def test_resume_graph_rejects_non_bool_decision() -> None:
+    """真实 Command(resume=...) 路径不得把字符串批准值转成 True。"""
+
+    graph = build_agent_graph(MockAzusaAdapter())
+    run_graph(graph, "delete mock record", thread_id="invalid-resume")
+
+    with pytest.raises(ValueError):
+        resume_graph(graph, thread_id="invalid-resume", approved="false")
+
+
 def test_graph_resumes_approval_and_preserves_pending_action() -> None:
     """批准决定应保留待执行动作并以完成状态结束。"""
 
@@ -329,6 +520,20 @@ def test_checkpointer_isolates_state_between_thread_ids() -> None:
     assert kaiji_state["evidence"][0]["chunk_id"] == "kaiji-001"
     assert azusa_state["evidence"][0]["chunk_id"] == "azusa-001"
     assert kaiji_state["step_count"] == azusa_state["step_count"] == 1
+
+
+def test_run_graph_rejects_reusing_an_existing_thread_id() -> None:
+    """新运行不得覆盖已有线程；暂停线程只能通过 resume_graph 继续。"""
+
+    adapter = RecordingAdapter()
+    graph = build_agent_graph(adapter)
+
+    run_graph(graph, "Kaiji", thread_id="single-use")
+
+    with pytest.raises(ValueError):
+        run_graph(graph, "Azusa", thread_id="single-use")
+
+    assert adapter.calls == [("Kaiji", 3, "hybrid")]
 
 
 def test_build_graph_uses_explicitly_injected_memory_saver() -> None:

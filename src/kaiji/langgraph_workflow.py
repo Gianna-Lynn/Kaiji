@@ -17,7 +17,8 @@ class AgentState(TypedDict, total=False):
 
     ``total=False`` 表示节点可以只返回自己负责更新的字段；LangGraph 会把这份
     局部更新合并进当前 State，而不是用返回字典替换整份状态。因此节点不得顺手
-    返回或清空不属于自己职责的字段。
+    返回或清空不属于自己职责的字段。它不表示运行中的 State 可以随意缺少基础字段：
+    ``_initial_state`` 会在首次进入图时建立完整状态，后续节点依赖这项不变量。
 
     ``question`` 保存不可变的原始用户问题，``rewritten_query`` 保存当前真正
     送往 Azusa 的查询。``step_count`` 只统计 search 节点执行次数，也就是
@@ -46,7 +47,7 @@ class AgentState(TypedDict, total=False):
 
 
 def _initial_state(question: str, *, max_steps: int) -> AgentState:
-    """创建计数器归零的初始状态，并拒绝无效检索上限。"""
+    """创建完整的初始运行状态，并拒绝无效检索上限。"""
 
     if max_steps < 1:
         raise ValueError("max_steps 必须至少为 1")
@@ -67,6 +68,77 @@ def _initial_state(question: str, *, max_steps: int) -> AgentState:
     )
 
 
+def route_request(state: AgentState) -> dict[str, str | None]:
+    """根据原始问题选择检索或人工确认，并只返回 Router 负责的字段。"""
+
+    # TODO 6b：检查原始 question。大小写归一化后，只要包含 delete、
+    # send 或 publish 之一，就返回 confirm，并把未改写的原问题保存到
+    # pending_action；其余问题返回 search，不能在路由阶段调用 Adapter。
+    raise NotImplementedError("TODO 6b：实现只读检索与副作用确认路由")
+
+
+def assess_search(state: AgentState) -> str:
+    """按固定优先级选择搜索后的下一节点。"""
+
+    # TODO 6c：依照以下优先级返回 answer、max_steps、rewrite 或 failure：
+    # 1. 有证据时优先 answer；
+    # 2. 无证据且 step_count 达到 max_steps 时返回 max_steps；
+    # 3. 尚有预算、error_retryable 为真且 retry_count == 0 时返回 rewrite；
+    # 4. 其他情况返回 failure。
+    # 这里只读取显式 State，不得另设隐藏的局部重试计数器。
+    raise NotImplementedError("TODO 6c：实现搜索结果的条件边判断")
+
+
+def rewrite_query(state: AgentState) -> dict[str, str | int]:
+    """确定性改写查询，并只返回查询和改写计数的局部更新。"""
+
+    # TODO 6d：返回 rewritten_query 与递增后的 retry_count，且只能返回这两个键。
+    # 改写必须确定、非空、不同于 question，并保留原始 question；具体追加的
+    # 检索词由人决定，但不能修改输入 State 或其他字段。
+    raise NotImplementedError("TODO 6d：实现一次有界的查询改写")
+
+
+def request_confirmation(state: AgentState) -> dict[str, bool]:
+    """暂停等待人工决定，并严格要求恢复值是布尔值。"""
+
+    # TODO 6e：调用 interrupt，载荷必须包含稳定的 kind、原始 action 和非空中文
+    # question。interrupt 返回的是恢复值，不是载荷本身；只接受真正的 bool，
+    # "false"、"拒绝"、0、1 和其他类型必须明确失败，不能使用 bool() 偷偷转换。
+    raise NotImplementedError("TODO 6e：实现副作用前的 Interrupt")
+
+
+def confirmation_route(state: AgentState) -> str:
+    """把已验证的人工决定映射为批准或拒绝分支。"""
+
+    # TODO 6f：只有 approved 是真正的 True 时返回 approved，否则返回 rejected。
+    raise NotImplementedError("TODO 6f：实现人工决定的条件边判断")
+
+
+def _search(adapter: AzusaAdapter, state: AgentState) -> dict[str, Any]:
+    """调用 Azusa，并把响应或适配器失败写回工作流 State。"""
+
+    step_count = state["step_count"] + 1
+    try:
+        response = adapter.search_azusa(
+            state["rewritten_query"],
+            3,
+            "hybrid",
+        )
+        return {
+            "evidence": [hit.model_dump(mode="json") for hit in response.hits],
+            "step_count": step_count,
+            "error": None if response.hits else "empty search result",
+            "error_retryable": not response.hits,
+        }
+    except AzusaAdapterError as exc:
+        return {
+            "evidence": [],
+            "step_count": step_count,
+            "error": str(exc),
+            "error_retryable": exc.retryable,
+        }
+
+
 def build_agent_graph(
     adapter: AzusaAdapter,
     *,
@@ -78,80 +150,6 @@ def build_agent_graph(
     ``max_steps`` 约束。副作用分支只模拟批准或拒绝，不执行真实外部写操作。
     ``thread_id`` 由调用入口通过 checkpointer 隔离，本函数不维护全局状态。
     """
-
-    def router(state: AgentState) -> dict:
-        """把普通问题送往检索，把模拟副作用送往人工确认。"""
-
-        # TODO 6b：检查原始 question。大小写归一化后，只要包含 delete、
-        # send 或 publish 之一，就返回 confirm，并把未改写的原问题保存到
-        # pending_action；其余问题返回 search，不能在路由阶段调用 Adapter。
-        raise NotImplementedError("TODO 6b：实现只读检索与副作用确认路由")
-
-    def search(state: AgentState) -> dict:
-        """调用 Azusa 检索，并把成功结果或结构化错误写回状态。
-
-        ``step_count`` 在每次真实调用前递增。合法但没有命中的响应不是协议
-        异常，而是可重试的空证据；Adapter 错误则保留自身的 ``retryable``。
-        后续成功必须清除上一次失败留下的 ``error`` 与恢复标记。
-        """
-
-        step_count = state["step_count"] + 1
-        try:
-            response = adapter.search_azusa(
-                state["rewritten_query"],
-                3,
-                "hybrid",
-            )
-            return {
-                "evidence": [hit.model_dump(mode="json") for hit in response.hits],
-                "step_count": step_count,
-                "error": None if response.hits else "empty search result",
-                "error_retryable": not response.hits,
-            }
-        except AzusaAdapterError as exc:
-            return {
-                "evidence": [],
-                "step_count": step_count,
-                "error": str(exc),
-                "error_retryable": exc.retryable,
-            }
-
-    def assess(state: AgentState) -> str:
-        """按固定优先级选择搜索后的下一节点。
-
-        优先级依次是：已有证据时回答；无证据且检索次数已达上限时停止；
-        尚有预算、错误可重试且从未改写时改写；其他情况以证据不足停止。
-        因此最后一次检索若得到证据，仍应回答而不是返回 ``MAX_STEPS``。
-        """
-
-        # TODO 6c：依照上述优先级返回 answer、max_steps、rewrite 或
-        # failure。这里读取的是 State，不得另设隐藏的局部重试计数器。
-        raise NotImplementedError("TODO 6c：实现搜索结果的条件边判断")
-
-    def rewrite(state: AgentState) -> dict:
-        """改写查询并增加重试计数，避免无界恢复循环。"""
-
-        # TODO 6d：返回新的 rewritten_query 与递增后的 retry_count。
-        # 改写必须确定、非空、不同于 question，并保留原始 question；具体
-        # 追加哪些检索词不是公开契约，但不能修改其他 State 字段。
-        raise NotImplementedError("TODO 6d：实现一次有界的查询改写")
-
-    def request_confirmation(state: AgentState) -> dict:
-        """在模拟副作用前暂停工作流，等待人的明确决定。"""
-
-        # TODO 6e：调用 interrupt 暂停，并把恢复值转换为 bool 后写入
-        # approved。中断负载必须包含：
-        # - kind="side_effect_confirmation"；
-        # - action=state["pending_action"]；
-        # - 非空且包含“批准”的中文 question。
-        # interrupt 返回的是恢复时传入的值，不是中断负载本身。
-        raise NotImplementedError("TODO 6e：实现副作用前的 Interrupt")
-
-    def confirmation_route(state: AgentState) -> str:
-        """把人工决定映射为批准或拒绝分支。"""
-
-        # TODO 6f：approved 为真时返回 approved，否则返回 rejected。
-        raise NotImplementedError("TODO 6f：实现人工决定的条件边判断")
 
     def approved(state: AgentState) -> dict:
         """生成模拟操作获批后的终止状态。"""
@@ -199,21 +197,19 @@ def build_agent_graph(
 
         raise NotImplementedError("TODO 6a：连接 LangGraph 节点与条件边")
 
-    # TODO 6a：先连接真实工作流，并删除 todo_6a 占位节点及其两条边。
-    # 只有先完成接线，后续测试才会进入 TODO 6b—6f 的节点逻辑：
+    # TODO 6a：删除 todo_6a 占位节点，连接以下真实图结构：
     # START → router
     # router -(state["route"])→ search | confirm
-    # search -(assess)→ answer | rewrite | failure | max_steps
+    # search -(assess_search)→ answer | rewrite | failure | max_steps
     # rewrite → search
     # confirm -(confirmation_route)→ approved | rejected
     # approved/rejected/answer/failure/max_steps → END
-    #
-    # 条件边必须显式给出“条件返回值 → 节点名”的映射。不得把 retry、
-    # Interrupt 或终止判断藏进 run_graph 外层循环。
+    # 条件边必须显式给出“条件返回值 → 节点名”的映射；不得把循环、Interrupt
+    # 或终止判断藏进 run_graph 外层循环。
     graph = StateGraph(AgentState)
-    graph.add_node("router", router)
-    graph.add_node("search", search)
-    graph.add_node("rewrite", rewrite)
+    graph.add_node("router", route_request)
+    graph.add_node("search", lambda state: _search(adapter, state))
+    graph.add_node("rewrite", rewrite_query)
     graph.add_node("confirm", request_confirmation)
     graph.add_node("approved", approved)
     graph.add_node("rejected", rejected)
@@ -228,14 +224,16 @@ def build_agent_graph(
 
 
 def run_graph(graph, question: str, *, thread_id: str, max_steps: int = 3) -> dict:
-    """以新线程状态运行工作流；``max_steps`` 表示最多检索次数。"""
+    """以未使用的 ``thread_id`` 开始新工作流；上限表示最多检索次数。"""
 
     config = {"configurable": {"thread_id": thread_id}}
+    if graph.get_state(config).values:
+        raise ValueError("thread_id 已经存在，只能通过 resume_graph 恢复暂停点")
     return graph.invoke(_initial_state(question, max_steps=max_steps), config=config)
 
 
-def resume_graph(graph, *, thread_id: str, approved: bool) -> dict:
-    """在同一 ``thread_id`` 上使用人工审批结果恢复暂停点。"""
+def resume_graph(graph, *, thread_id: str, approved: object) -> dict:
+    """在同一 ``thread_id`` 上提交恢复值；审批节点会严格验证其类型。"""
 
     config = {"configurable": {"thread_id": thread_id}}
     return graph.invoke(Command(resume=approved), config=config)

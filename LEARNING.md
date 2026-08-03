@@ -319,6 +319,8 @@ Kaiji？
 `AgentState` 使用 `TypedDict(total=False)`：每个节点只返回自己负责的局部更新，
 LangGraph 再把它合并进当前 State；节点返回字典不是整份状态的替代品。因此 rewrite
 只更新查询与重试计数，审批节点也不能顺手清空证据、原问题或其他无关字段。
+这里的 `total=False` 只约束节点可以返回局部更新，不表示运行中的 State 可以随意缺少
+基础字段；`_initial_state()` 会在首次进入图时建立完整状态，后续节点依赖这项不变量。
 
 | 字段 | 含义 |
 |---|---|
@@ -357,6 +359,8 @@ LangGraph 再把它合并进当前 State；节点返回字典不是整份状态�
 用于回答的其他命中一并列为引用。`delete`、`send`、`publish` 视为模拟副作用，必须在
 任何检索发生前进入 Interrupt；中断负载包含稳定的 `kind`、原始 `action` 和非空中文
 问题。批准结果必须包含待执行 action，拒绝则没有答案；具体自然语言模板不是契约。
+审批恢复值必须是 Python 的 `bool`；`"false"`、`"拒绝"`、`0`、`1` 等其他类型
+不得被 truthy/falsy 转换成批准或拒绝，非法恢复值应明确失败。
 `max_steps < 1` 必须在进入图前抛 `ValueError`，但测试不绑定异常文案。
 
 不同 `thread_id` 的暂停点和恢复决定必须隔离，包括两个线程同时处于 Interrupt、再按
@@ -365,13 +369,34 @@ LangGraph 再把它合并进当前 State；节点返回字典不是整份状态�
 
 `resume_graph()` 的前置条件是同一图中存在该 `thread_id` 的待恢复 Interrupt；未知或已经
 终止的线程如何转成产品级错误不在本课范围内，当前允许 LangGraph 抛出框架异常。
+`run_graph()` 只接受尚未使用的 `thread_id`；重复启动同一线程会明确抛出 `ValueError`，
+不能用它覆盖或延续已有运行。
+
+本课与 TODO4 的横向边界：LangGraph 主要替代显式 State 变量、`if/elif` 分支、循环
+跳转、暂停与恢复编排；它没有整体替代 TODO4 的 `AgentRuntime`。本实现的 Search 节点
+直接调用 `AzusaAdapter`，不经过 `ToolExecutor`，因此不会自动获得 ToolExecutor 的
+超时、有限重试、`ToolResult`/`ToolFailure` 结构化失败，也不包含原生 Runtime 的
+`Message`、`Trace`、重复工具调用检测和停止流程。这里的 `retry_count` 只表示 query
+rewrite 次数，不是工具执行重试次数。
 
 完成 AgentState、Node、Edge、Conditional Edge、Checkpoint、Interrupt 和
 `Command(resume=...)`。
 
 `main` 的练习子任务按依赖顺序编号：**6a 先连接图 → 6b Router → 6c Assess →
-6d Rewrite → 6e Interrupt → 6f 审批条件边**。先完成 6a 后，行为测试才会真正进入各
-节点；不要跳过接线后误以为 6b—6f 已经被验证。
+6d Rewrite → 6e Interrupt → 6f 审批条件边**。每个子任务都有独立的纯函数或图结构
+验收；完成当前子任务后，窄测试应只反映当前边界，后续集成测试仍可能因后续 TODO 失败。
+
+```powershell
+python -m pytest tests/test_langgraph_workflow.py -k todo_6a
+python -m pytest tests/test_langgraph_workflow.py -k todo_6b
+python -m pytest tests/test_langgraph_workflow.py -k todo_6c
+python -m pytest tests/test_langgraph_workflow.py -k todo_6d
+python -m pytest tests/test_langgraph_workflow.py -k todo_6e
+python -m pytest tests/test_langgraph_workflow.py -k todo_6f
+```
+
+完成 6a 后应先看到图结构测试通过，而不是执行未完成节点；完成 6b—6f 后再运行完整
+工作流测试。完整测试命令如下：
 
 ```powershell
 python -m pytest tests/test_langgraph_workflow.py
