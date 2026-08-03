@@ -347,6 +347,15 @@ def test_checkpoint_stop_reason_uses_plain_strings_for_all_terminal_paths() -> N
         rejected_graph, "plain-rejected", rejected, StopReason.HUMAN_REJECTED
     )
 
+    approved_graph = build_agent_graph(MockAzusaAdapter())
+    run_graph(approved_graph, "send mock report", thread_id="plain-approved")
+    approved = resume_graph(
+        approved_graph, thread_id="plain-approved", approved=True
+    )
+    _assert_plain_checkpoint_stop_reason(
+        approved_graph, "plain-approved", approved, StopReason.COMPLETED
+    )
+
 
 def test_graph_answer_only_cites_the_evidence_used_for_its_text() -> None:
     """未用于正文的第二条命中不得被硬编码进引用。"""
@@ -659,12 +668,17 @@ def test_default_checkpointer_is_not_shared_between_graph_instances() -> None:
 def test_graph_rejects_invalid_search_limit(max_steps: object) -> None:
     """非正整数上限不能进入图执行，也不能产生含糊的零步结果。"""
 
-    graph = build_agent_graph(MockAzusaAdapter())
+    adapter = RecordingAdapter()
+    graph = build_agent_graph(adapter)
+    thread_id = f"invalid-{max_steps}"
 
     with pytest.raises(ValueError):
         run_graph(
             graph,
             "Kaiji",
-            thread_id=f"invalid-{max_steps}",
+            thread_id=thread_id,
             max_steps=max_steps,
         )
+
+    assert adapter.calls == []
+    assert not graph.get_state({"configurable": {"thread_id": thread_id}}).values
