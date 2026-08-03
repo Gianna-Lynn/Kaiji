@@ -330,11 +330,11 @@ LangGraph 再把它合并进当前 State；节点返回字典不是整份状态�
 | `evidence` | 最近一次成功响应中经过 Pydantic 校验的命中 |
 | `retry_count` | 已执行的 query rewrite 次数，最多一次 |
 | `step_count` | `search` 节点执行次数，也就是实际检索尝试次数 |
-| `max_steps` | 检索尝试上限，必须至少为 1 |
+| `max_steps` | 检索尝试上限，必须是正整数；`bool`、浮点数、字符串和 `None` 均非法 |
 | `error` / `error_retryable` | 最近一次检索失败及其恢复属性 |
 | `pending_action` | 等待人工确认的模拟副作用请求 |
 | `approved` | Interrupt 恢复时写入的人工决定 |
-| `answer` / `stop_reason` | 终止节点写入的对外结果 |
+| `answer` / `stop_reason` | 终止节点写入的对外结果；LangGraph State 中的 `stop_reason` 是可移植字符串 |
 
 实现状态图：
 
@@ -363,7 +363,13 @@ LangGraph 再把它合并进当前 State；节点返回字典不是整份状态�
 等其他类型不得被 truthy/falsy 转换成批准或拒绝，非法恢复值应明确失败。`request_confirmation`
 和 `confirmation_route` 都必须执行这项严格校验：前者拒绝非法 Interrupt 恢复值，后者还要
 防御被破坏的 AgentState，不能把内部协议错误伪装成用户拒绝。
-`max_steps < 1` 必须在进入图前抛 `ValueError`，但测试不绑定异常文案。
+`max_steps` 必须是真正的 Python 正整数；`True`、浮点数、`NaN`、字符串、`None` 和小于 1
+的整数都必须在进入图前抛 `ValueError`。类型标注不会执行运行时校验，不能依赖比较运算或
+truthy/falsy 语义代替严格类型检查。测试不绑定异常文案。
+
+LangGraph Checkpoint 的 State 必须由可移植的基础类型组成，因此终止节点把 `StopReason`
+枚举保存为 `.value` 字符串，而不是直接保存自定义枚举对象；需要恢复成枚举时，应在对外
+模型边界显式转换。这样调用方注入的 `MemorySaver` 也不会依赖自定义类型白名单。
 
 不同 `thread_id` 的暂停点和恢复决定必须隔离，包括两个线程同时处于 Interrupt、再按
 不同顺序恢复的情况。`build_agent_graph(checkpointer=...)` 必须使用调用方传入的
@@ -371,8 +377,9 @@ LangGraph 再把它合并进当前 State；节点返回字典不是整份状态�
 
 `resume_graph()` 的前置条件是同一图中存在该 `thread_id` 的待恢复 Interrupt；未知或已经
 终止的线程如何转成产品级错误不在本课范围内，当前允许 LangGraph 抛出框架异常。
-`run_graph()` 只接受尚未使用的 `thread_id`；重复启动同一线程会明确抛出 `ValueError`，
-不能用它覆盖或延续已有运行。
+`run_graph()` 只接受尚未使用的 `thread_id`；重复启动同一线程（包括仍停在 Interrupt 的
+暂停线程）会明确抛出 `ValueError`，不能用它覆盖或延续已有运行。暂停线程必须保留原始
+`pending_action` 和 Interrupt，并通过 `resume_graph()` 继续。
 
 本课与 TODO4 的横向边界：LangGraph 主要替代显式 State 变量、`if/elif` 分支、循环
 跳转、暂停与恢复编排；它没有整体替代 TODO4 的 `AgentRuntime`。本实现的 Search 节点

@@ -28,7 +28,7 @@ class AgentState(TypedDict, total=False):
     ``route`` 是 router 选择的下一条边，``evidence`` 是校验后的检索命中，
     ``error`` 与 ``error_retryable`` 描述最近一次失败。``pending_action``、
     ``approved`` 分别保存待确认的模拟副作用和人的恢复决定。``answer`` 与
-    ``stop_reason`` 只由终止节点写入，表示对外结果。
+    ``stop_reason`` 只由终止节点写入，保存可移植的停止原因字符串。
     """
 
     question: str
@@ -43,13 +43,13 @@ class AgentState(TypedDict, total=False):
     error_retryable: bool
     pending_action: str | None
     approved: bool | None
-    stop_reason: StopReason | None
+    stop_reason: str | None
 
 
 def _initial_state(question: str, *, max_steps: int) -> AgentState:
-    """创建完整的初始运行状态，并拒绝无效检索上限。"""
+    """创建完整状态，并严格拒绝非正整数检索上限。"""
 
-    if max_steps < 1:
+    if type(max_steps) is not int or max_steps < 1:
         raise ValueError("max_steps 必须至少为 1")
 
     return AgentState(
@@ -157,7 +157,7 @@ def build_agent_graph(
 
         return {
             "answer": f"已批准模拟操作：{state['pending_action']}",
-            "stop_reason": StopReason.COMPLETED,
+            "stop_reason": StopReason.COMPLETED.value,
         }
 
     def rejected(state: AgentState) -> dict:
@@ -165,7 +165,7 @@ def build_agent_graph(
 
         return {
             "answer": None,
-            "stop_reason": StopReason.HUMAN_REJECTED,
+            "stop_reason": StopReason.HUMAN_REJECTED.value,
         }
 
     def answer(state: AgentState) -> dict:
@@ -174,7 +174,7 @@ def build_agent_graph(
         evidence = state["evidence"][0]
         return {
             "answer": f"{evidence['text']}\nCitations: {evidence['chunk_id']}",
-            "stop_reason": StopReason.COMPLETED,
+            "stop_reason": StopReason.COMPLETED.value,
         }
 
     def failure(state: AgentState) -> dict:
@@ -182,7 +182,7 @@ def build_agent_graph(
 
         return {
             "answer": None,
-            "stop_reason": StopReason.INSUFFICIENT_EVIDENCE,
+            "stop_reason": StopReason.INSUFFICIENT_EVIDENCE.value,
         }
 
     def max_steps(state: AgentState) -> dict:
@@ -190,7 +190,7 @@ def build_agent_graph(
 
         return {
             "answer": None,
-            "stop_reason": StopReason.MAX_STEPS,
+            "stop_reason": StopReason.MAX_STEPS.value,
         }
 
     def unfinished_graph(_state: AgentState) -> dict:
@@ -225,7 +225,7 @@ def build_agent_graph(
 
 
 def run_graph(graph, question: str, *, thread_id: str, max_steps: int = 3) -> dict:
-    """以未使用的 ``thread_id`` 开始新工作流；上限表示最多检索次数。"""
+    """以未使用的线程开始工作流；``max_steps`` 必须是正整数检索上限。"""
 
     config = {"configurable": {"thread_id": thread_id}}
     if graph.get_state(config).values:
