@@ -108,9 +108,10 @@ def request_confirmation(state: AgentState) -> dict[str, bool]:
 
 
 def confirmation_route(state: AgentState) -> str:
-    """把已验证的人工决定映射为批准或拒绝分支。"""
+    """严格校验人工决定，并映射为批准或拒绝分支。"""
 
-    # TODO 6f：只有 approved 是真正的 True 时返回 approved，否则返回 rejected。
+    # TODO 6f：approved 是真正的 True 时返回 approved，真正的 False 时返回 rejected；
+    # None、0、1、字符串及其他非 bool 值必须明确抛出异常，不能伪装成用户拒绝。
     raise NotImplementedError("TODO 6f：实现人工决定的条件边判断")
 
 

@@ -158,10 +158,9 @@ def test_todo_6a_graph_has_explicit_nodes_and_edges() -> None:
     ("question", "expected"),
     [
         ("Kaiji 是什么？", {"route": "search"}),
-        (
-            "SEND mock report",
-            {"route": "confirm", "pending_action": "SEND mock report"},
-        ),
+        ("delete mock record", {"route": "confirm", "pending_action": "delete mock record"}),
+        ("sEnD mock report", {"route": "confirm", "pending_action": "sEnD mock report"}),
+        ("Publish mock report", {"route": "confirm", "pending_action": "Publish mock report"}),
     ],
 )
 def test_todo_6b_router_returns_only_its_local_update(
@@ -180,7 +179,9 @@ def test_todo_6b_router_returns_only_its_local_update(
     ("overrides", "expected"),
     [
         ({"evidence": [{"chunk_id": "c1"}], "step_count": 3}, "answer"),
+        ({"evidence": [{"chunk_id": "c1"}], "step_count": 4}, "answer"),
         ({"step_count": 3, "max_steps": 3}, "max_steps"),
+        ({"step_count": 4, "max_steps": 3}, "max_steps"),
         ({"error_retryable": True, "retry_count": 0}, "rewrite"),
         ({"error_retryable": True, "retry_count": 1}, "failure"),
         ({"error_retryable": False}, "failure"),
@@ -204,28 +205,36 @@ def test_todo_6d_rewrite_returns_only_local_updates() -> None:
 
     assert set(result) == {"rewritten_query", "retry_count"}
     assert result["rewritten_query"] != state["question"]
+    assert result["rewritten_query"].strip()
     assert result["retry_count"] == 1
+    assert rewrite_query(deepcopy(state)) == result
+    assert state["question"] == "原始问题"
+    assert state["route"] == "search"
     assert state == before
 
 
+@pytest.mark.parametrize("decision", [True, False])
 def test_todo_6e_confirmation_returns_strict_bool_and_stable_payload(
     monkeypatch: pytest.MonkeyPatch,
+    decision: bool,
 ) -> None:
     """6e 验证审批载荷和真正布尔值的局部更新。"""
 
     captured: list[dict] = []
+    state = _base_state(pending_action="delete mock record")
+    before = deepcopy(state)
 
     def fake_interrupt(payload: dict) -> bool:
         captured.append(payload)
-        return True
+        return decision
 
     monkeypatch.setattr("kaiji.langgraph_workflow.interrupt", fake_interrupt)
 
-    result = request_confirmation(
-        _base_state(pending_action="delete mock record")
-    )
+    result = request_confirmation(state)
 
-    assert result == {"approved": True}
+    assert result == {"approved": decision}
+    assert set(result) == {"approved"}
+    assert state == before
     assert captured == [
         {
             "kind": "side_effect_confirmation",
@@ -251,15 +260,24 @@ def test_todo_6e_rejects_non_bool_resume_values(
 
 
 @pytest.mark.parametrize(
-    ("approved", "expected"),
-    [(True, "approved"), (False, "rejected"), (1, "rejected"), ("true", "rejected")],
+    ("approved", "expected"), [(True, "approved"), (False, "rejected")]
 )
 def test_todo_6f_confirmation_route_requires_true_bool(
     approved: object, expected: str
 ) -> None:
-    """6f 只把真正的 True 送往批准分支。"""
+    """6f 直接验证真正的 True/False 才能进入对应分支。"""
 
     assert confirmation_route(_base_state(approved=approved)) == expected
+
+
+@pytest.mark.parametrize("approved", [None, 0, 1, "true", "false", "拒绝"])
+def test_todo_6f_confirmation_route_rejects_non_bool_state(
+    approved: object,
+) -> None:
+    """被破坏 State 中的非法审批值必须明确失败，不能伪装成拒绝。"""
+
+    with pytest.raises(ValueError):
+        confirmation_route(_base_state(approved=approved))
 
 
 def test_graph_answers_with_citation_at_search_limit() -> None:

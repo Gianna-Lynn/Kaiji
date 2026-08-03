@@ -359,8 +359,10 @@ LangGraph 再把它合并进当前 State；节点返回字典不是整份状态�
 用于回答的其他命中一并列为引用。`delete`、`send`、`publish` 视为模拟副作用，必须在
 任何检索发生前进入 Interrupt；中断负载包含稳定的 `kind`、原始 `action` 和非空中文
 问题。批准结果必须包含待执行 action，拒绝则没有答案；具体自然语言模板不是契约。
-审批恢复值必须是 Python 的 `bool`；`"false"`、`"拒绝"`、`0`、`1` 等其他类型
-不得被 truthy/falsy 转换成批准或拒绝，非法恢复值应明确失败。
+审批恢复值必须是 Python 的 `bool`；`"false"`、`"拒绝"`、`0`、`1`、`None`
+等其他类型不得被 truthy/falsy 转换成批准或拒绝，非法恢复值应明确失败。`request_confirmation`
+和 `confirmation_route` 都必须执行这项严格校验：前者拒绝非法 Interrupt 恢复值，后者还要
+防御被破坏的 AgentState，不能把内部协议错误伪装成用户拒绝。
 `max_steps < 1` 必须在进入图前抛 `ValueError`，但测试不绑定异常文案。
 
 不同 `thread_id` 的暂停点和恢复决定必须隔离，包括两个线程同时处于 Interrupt、再按
