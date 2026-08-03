@@ -17,7 +17,8 @@ class AgentState(TypedDict, total=False):
 
     ``total=False`` 表示节点可以只返回自己负责更新的字段；LangGraph 会把这份
     局部更新合并进当前 State，而不是用返回字典替换整份状态。因此节点不得顺手
-    返回或清空不属于自己职责的字段。
+    返回或清空不属于自己职责的字段。它不表示运行中的 State 可以随意缺少基础字段：
+    ``_initial_state`` 会在首次进入图时建立完整状态，后续节点依赖这项不变量。
 
     ``question`` 保存不可变的原始用户问题，``rewritten_query`` 保存当前真正
     送往 Azusa 的查询。``step_count`` 只统计 search 节点执行次数，也就是
@@ -46,7 +47,7 @@ class AgentState(TypedDict, total=False):
 
 
 def _initial_state(question: str, *, max_steps: int) -> AgentState:
-    """创建计数器归零的初始状态，并拒绝无效检索上限。"""
+    """创建完整的初始运行状态，并拒绝无效检索上限。"""
 
     if max_steps < 1:
         raise ValueError("max_steps 必须至少为 1")
@@ -67,6 +68,86 @@ def _initial_state(question: str, *, max_steps: int) -> AgentState:
     )
 
 
+def route_request(state: AgentState) -> dict[str, str | None]:
+    """根据原始问题选择检索或人工确认，并只返回 Router 负责的字段。"""
+
+    lowered = state["question"].lower()
+    side_effect = any(word in lowered for word in ("delete", "send", "publish"))
+    if side_effect:
+        return {
+            "route": "confirm",
+            "pending_action": state["question"],
+        }
+    return {"route": "search"}
+
+
+def assess_search(state: AgentState) -> str:
+    """按固定优先级选择搜索后的下一节点。"""
+
+    if state.get("evidence"):
+        return "answer"
+    if state["step_count"] >= state["max_steps"]:
+        return "max_steps"
+    if state.get("error_retryable") and state["retry_count"] < 1:
+        return "rewrite"
+    return "failure"
+
+
+def rewrite_query(state: AgentState) -> dict[str, str | int]:
+    """确定性改写查询，并只返回查询和改写计数的局部更新。"""
+
+    return {
+        "rewritten_query": f"{state['question']} Kaiji Azusa evidence",
+        "retry_count": state["retry_count"] + 1,
+    }
+
+
+def request_confirmation(state: AgentState) -> dict[str, bool]:
+    """暂停等待人工决定，并严格要求恢复值是布尔值。"""
+
+    decision = interrupt(
+        {
+            "kind": "side_effect_confirmation",
+            "action": state["pending_action"],
+            "question": "是否批准这项模拟副作用？",
+        }
+    )
+    if type(decision) is not bool:
+        raise ValueError("人工审批结果必须是 bool")
+    return {"approved": decision}
+
+
+def confirmation_route(state: AgentState) -> str:
+    """把已验证的人工决定映射为批准或拒绝分支。"""
+
+    return "approved" if state.get("approved") is True else "rejected"
+
+
+def _search(adapter: AzusaAdapter, state: AgentState) -> dict[str, Any]:
+    """调用 Azusa，并把响应或适配器失败写回工作流 State。"""
+
+    step_count = state["step_count"] + 1
+    try:
+        response = adapter.search_azusa(
+            state["rewritten_query"],
+            3,
+            "hybrid",
+        )
+        return {
+            "evidence": [hit.model_dump(mode="json") for hit in response.hits],
+            "step_count": step_count,
+            "error": None if response.hits else "empty search result",
+            "error_retryable": not response.hits,
+        }
+    except AzusaAdapterError as exc:
+        return {
+            "evidence": [],
+            "step_count": step_count,
+            "error": str(exc),
+            "error_retryable": exc.retryable,
+        }
+
+
 def build_agent_graph(
     adapter: AzusaAdapter,
     *,
@@ -78,85 +159,6 @@ def build_agent_graph(
     ``max_steps`` 约束。副作用分支只模拟批准或拒绝，不执行真实外部写操作。
     ``thread_id`` 由调用入口通过 checkpointer 隔离，本函数不维护全局状态。
     """
-
-    def router(state: AgentState) -> dict:
-        """把普通问题送往检索，把模拟副作用送往人工确认。"""
-
-        lowered = state["question"].lower()
-        side_effect = any(word in lowered for word in ("delete", "send", "publish"))
-        if side_effect:
-            return {
-                "route": "confirm",
-                "pending_action": state["question"],
-            }
-        return {"route": "search"}
-
-    def search(state: AgentState) -> dict:
-        """调用 Azusa 检索，并把成功结果或结构化错误写回状态。"""
-
-        step_count = state["step_count"] + 1
-        try:
-            response = adapter.search_azusa(
-                state["rewritten_query"],
-                3,
-                "hybrid",
-            )
-            return {
-                "evidence": [hit.model_dump(mode="json") for hit in response.hits],
-                "step_count": step_count,
-                "error": None if response.hits else "empty search result",
-                "error_retryable": not response.hits,
-            }
-        except AzusaAdapterError as exc:
-            return {
-                "evidence": [],
-                "step_count": step_count,
-                "error": str(exc),
-                "error_retryable": exc.retryable,
-            }
-
-    def assess(state: AgentState) -> str:
-        """按固定优先级选择搜索后的下一节点。
-
-        优先级依次是：已有证据时回答；无证据且检索次数已达上限时停止；
-        尚有预算、错误可重试且从未改写时改写；其他情况以证据不足停止。
-        因此最后一次检索若得到证据，仍应回答而不是返回 ``MAX_STEPS``。
-        """
-
-        if state.get("evidence"):
-            return "answer"
-        if state["step_count"] >= state["max_steps"]:
-            return "max_steps"
-        if state.get("error_retryable") and state["retry_count"] < 1:
-            return "rewrite"
-        return "failure"
-
-    def rewrite(state: AgentState) -> dict:
-        """改写查询并增加重试计数，避免无界恢复循环。"""
-
-        return {
-            "rewritten_query": f"{state['question']} Kaiji Azusa evidence",
-            "retry_count": state["retry_count"] + 1,
-        }
-
-    def request_confirmation(state: AgentState) -> dict:
-        """在模拟副作用前暂停工作流，等待人的明确决定。"""
-
-        approved = bool(
-            interrupt(
-                {
-                    "kind": "side_effect_confirmation",
-                    "action": state["pending_action"],
-                    "question": "是否批准这项模拟副作用？",
-                }
-            )
-        )
-        return {"approved": approved}
-
-    def confirmation_route(state: AgentState) -> str:
-        """把人工决定映射为批准或拒绝分支。"""
-
-        return "approved" if state.get("approved") else "rejected"
 
     def approved(state: AgentState) -> dict:
         """生成模拟操作获批后的终止状态。"""
@@ -200,9 +202,9 @@ def build_agent_graph(
         }
 
     graph = StateGraph(AgentState)
-    graph.add_node("router", router)
-    graph.add_node("search", search)
-    graph.add_node("rewrite", rewrite)
+    graph.add_node("router", route_request)
+    graph.add_node("search", lambda state: _search(adapter, state))
+    graph.add_node("rewrite", rewrite_query)
     graph.add_node("confirm", request_confirmation)
     graph.add_node("approved", approved)
     graph.add_node("rejected", rejected)
@@ -217,7 +219,7 @@ def build_agent_graph(
     )
     graph.add_conditional_edges(
         "search",
-        assess,
+        assess_search,
         {
             "answer": "answer",
             "rewrite": "rewrite",
@@ -238,14 +240,16 @@ def build_agent_graph(
 
 
 def run_graph(graph, question: str, *, thread_id: str, max_steps: int = 3) -> dict:
-    """以新线程状态运行工作流；``max_steps`` 表示最多检索次数。"""
+    """以未使用的 ``thread_id`` 开始新工作流；上限表示最多检索次数。"""
 
     config = {"configurable": {"thread_id": thread_id}}
+    if graph.get_state(config).values:
+        raise ValueError("thread_id 已经存在，只能通过 resume_graph 恢复暂停点")
     return graph.invoke(_initial_state(question, max_steps=max_steps), config=config)
 
 
-def resume_graph(graph, *, thread_id: str, approved: bool) -> dict:
-    """在同一 ``thread_id`` 上使用人工审批结果恢复暂停点。"""
+def resume_graph(graph, *, thread_id: str, approved: object) -> dict:
+    """在同一 ``thread_id`` 上提交恢复值；审批节点会严格验证其类型。"""
 
     config = {"configurable": {"thread_id": thread_id}}
     return graph.invoke(Command(resume=approved), config=config)
