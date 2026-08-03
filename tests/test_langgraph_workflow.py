@@ -115,6 +115,18 @@ def _base_state(**overrides: object) -> AgentState:
     return state
 
 
+def _assert_plain_checkpoint_stop_reason(
+    graph, thread_id: str, result: dict, expected: StopReason
+) -> None:
+    """确认对外结果和 Checkpoint 都只保存停止原因字符串。"""
+
+    assert result["stop_reason"] == expected.value
+    assert type(result["stop_reason"]) is str
+    snapshot = graph.get_state({"configurable": {"thread_id": thread_id}})
+    assert snapshot.values["stop_reason"] == expected.value
+    assert type(snapshot.values["stop_reason"]) is str
+
+
 def test_todo_6a_graph_has_explicit_nodes_and_edges() -> None:
     """6a 只检查图结构，不执行任何节点。"""
 
@@ -296,6 +308,44 @@ def test_graph_answers_with_citation_at_search_limit() -> None:
     assert adapter.calls == [("Kaiji", 3, "hybrid")]
     snapshot = graph.get_state({"configurable": {"thread_id": "success"}})
     assert snapshot.values["step_count"] == 1
+
+
+def test_checkpoint_stop_reason_uses_plain_strings_for_all_terminal_paths() -> None:
+    """所有终止节点都必须避免把自定义 StopReason 对象写入 Checkpoint。"""
+
+    completed_graph = build_agent_graph(MockAzusaAdapter())
+    completed = run_graph(completed_graph, "Kaiji", thread_id="plain-completed")
+    _assert_plain_checkpoint_stop_reason(
+        completed_graph, "plain-completed", completed, StopReason.COMPLETED
+    )
+
+    max_steps_graph = build_agent_graph(AlwaysEmptyAdapter())
+    max_steps = run_graph(
+        max_steps_graph,
+        "unfindable-token",
+        thread_id="plain-max-steps",
+        max_steps=1,
+    )
+    _assert_plain_checkpoint_stop_reason(
+        max_steps_graph, "plain-max-steps", max_steps, StopReason.MAX_STEPS
+    )
+
+    failure_graph = build_agent_graph(AlwaysEmptyAdapter())
+    failure = run_graph(
+        failure_graph, "unfindable-token", thread_id="plain-failure"
+    )
+    _assert_plain_checkpoint_stop_reason(
+        failure_graph, "plain-failure", failure, StopReason.INSUFFICIENT_EVIDENCE
+    )
+
+    rejected_graph = build_agent_graph(MockAzusaAdapter())
+    run_graph(rejected_graph, "delete mock record", thread_id="plain-rejected")
+    rejected = resume_graph(
+        rejected_graph, thread_id="plain-rejected", approved=False
+    )
+    _assert_plain_checkpoint_stop_reason(
+        rejected_graph, "plain-rejected", rejected, StopReason.HUMAN_REJECTED
+    )
 
 
 def test_graph_answer_only_cites_the_evidence_used_for_its_text() -> None:
@@ -554,6 +604,32 @@ def test_run_graph_rejects_reusing_an_existing_thread_id() -> None:
     assert adapter.calls == [("Kaiji", 3, "hybrid")]
 
 
+def test_run_graph_rejects_reusing_a_paused_thread_without_overwriting_checkpoint() -> None:
+    """暂停线程不能被新运行覆盖，原 Interrupt 必须仍可恢复。"""
+
+    adapter = RecordingAdapter()
+    graph = build_agent_graph(adapter)
+    thread_id = "paused-single-use"
+    action = "delete original mock record"
+
+    paused = run_graph(graph, action, thread_id=thread_id)
+    assert _interrupt_payload(paused)["action"] == action
+
+    with pytest.raises(ValueError):
+        run_graph(graph, "publish replacement mock report", thread_id=thread_id)
+
+    snapshot = graph.get_state({"configurable": {"thread_id": thread_id}})
+    assert snapshot.values["pending_action"] == action
+    assert snapshot.values["route"] == "confirm"
+    assert snapshot.values["approved"] is None
+
+    result = resume_graph(graph, thread_id=thread_id, approved=False)
+    assert result["pending_action"] == action
+    assert result["stop_reason"] == StopReason.HUMAN_REJECTED
+    assert result["answer"] is None
+    assert adapter.calls == []
+
+
 def test_build_graph_uses_explicitly_injected_memory_saver() -> None:
     """调用方提供的 Checkpointer 必须用于编译和读取线程快照。"""
 
@@ -577,9 +653,11 @@ def test_default_checkpointer_is_not_shared_between_graph_instances() -> None:
     assert first.checkpointer is not second.checkpointer
 
 
-@pytest.mark.parametrize("max_steps", [0, -1])
-def test_graph_rejects_non_positive_search_limit(max_steps: int) -> None:
-    """无效上限不能进入图执行，也不能产生含糊的零步结果。"""
+@pytest.mark.parametrize(
+    "max_steps", [0, -1, True, 1.5, float("nan"), "3", None]
+)
+def test_graph_rejects_invalid_search_limit(max_steps: object) -> None:
+    """非正整数上限不能进入图执行，也不能产生含糊的零步结果。"""
 
     graph = build_agent_graph(MockAzusaAdapter())
 
