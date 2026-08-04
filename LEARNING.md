@@ -314,6 +314,37 @@ Kaiji？
 
 文件：`src/kaiji/langgraph_workflow.py`
 
+##### 先知道这一课最终要做出什么
+
+这一课不是要求人从零实现一套 Agent Runtime，而是把一个已经确定的检索与审批流程，
+改用 LangGraph 的 **State、Node、Edge、Conditional Edge、Checkpoint 和 Interrupt**
+表达出来。最终产物应能沿三条主路径运行：
+
+```text
+普通问题：初始化 State → Router → Search → 条件判断 → Answer → END
+空证据或可恢复错误：Search → 条件判断 → Rewrite → Search（最多一次）
+模拟副作用：Router → Confirm → Interrupt 暂停 → Command(resume=...) → Approved/Rejected → END
+```
+
+完成后，人应当能把 TODO4 中亲手维护的状态变量、`if/elif`、循环跳转和暂停恢复，逐项
+对应到 LangGraph 的 State、节点、边和 Checkpoint；不要求在本课重新实现 TODO4 的
+Message、Trace、ToolExecutor 或完整 Agent Loop。
+
+##### 先分清哪些已经提供，哪些需要人实现
+
+| 已经提供的课程脚手架 | 人需要完成的 TODO |
+|---|---|
+| `AgentState` 字段与 `_initial_state()` | 6b：`route_request()` Router 节点 |
+| `_search()` 以及 Answer/Failure/Max Steps 等终止节点 | 6c：`assess_search()` 条件边判断 |
+| `MemorySaver` 的创建与注入 | 6d：`rewrite_query()` 局部 State 更新 |
+| `run_graph()` 与 `resume_graph()` 调用入口 | 6e：`request_confirmation()` Interrupt 节点 |
+| 正确答案分支中已经验证过的完整工作流 | 6f：`confirmation_route()` 审批条件边判断 |
+| 每个子任务的窄测试和完整集成测试 | 6a：在 `build_agent_graph()` 中组装整张图 |
+
+Search、Answer、Failure、Max Steps 和 Checkpointer 接线是供人阅读与复用的脚手架，
+不是本课要求重新设计的隐藏 TODO。真实副作用、生产级持久化、模型 Tool Calling 和
+ToolExecutor 可靠性也不属于本课实现范围。
+
 先明确 State 字段的职责：
 
 `AgentState` 使用 `TypedDict(total=False)`：每个节点只返回自己负责的局部更新，
@@ -336,17 +367,57 @@ LangGraph 再把它合并进当前 State；节点返回字典不是整份状态�
 | `approved` | Interrupt 恢复时写入的人工决定 |
 | `answer` / `stop_reason` | 终止节点写入的对外结果；LangGraph State 中的 `stop_reason` 是可移植字符串 |
 
-实现状态图：
+先沿着实际执行顺序认识这张图。这里的 `assess_search()` 和
+`confirmation_route()` 是 **条件边使用的路由函数，不是独立 Node**：
 
 ```text
-问题 → Router → Search → Assess
-                    ├─ 有证据 → Answer
-                    ├─ 可恢复 → Rewrite → Search（最多一次）
-                    ├─ 达到上限 → Max Steps
-                    └─ 不可恢复 → Failure
-
-副作用请求 → Interrupt → 人工批准 / 拒绝 → Resume
+START
+  ↓
+Router Node
+  ├─ search  → Search Node
+  │               ↓
+  │          assess_search(state)〔条件边判断，不是 Node〕
+  │               ├─ 有证据     → Answer → END
+  │               ├─ 可恢复     → Rewrite → Search（最多一次）
+  │               ├─ 达到上限   → Max Steps → END
+  │               └─ 不可恢复   → Failure → END
+  │
+  └─ confirm → Confirmation Node
+                  ↓
+             interrupt(payload) 暂停并保存 Checkpoint
+                  ↓
+             外部取得人的 True / False
+                  ↓
+             Command(resume=decision)
+                  ↓
+             节点返回 {"approved": decision}
+                  ↓
+             confirmation_route(state)〔条件边判断〕
+                  ├─ approved → Approved → END
+                  └─ rejected → Rejected → END
 ```
+
+##### 推荐的第一次施工顺序
+
+编号 6a—6f 用于稳定定位课程文件和测试，并不代表初学者最自然的施工顺序。第一次学习
+建议先完成职责单一的函数，理解它们的输入输出，最后再用 6a 把零件组装成图：
+
+| 顺序 | 修改位置 | 这一小步真正学习什么 | 完成后先运行 |
+|---|---|---|---|
+| 0 | 只阅读 `AgentState`、`_initial_state()` 和已提供节点 | 哪些数据必须跨步骤保存在 State；哪些节点只返回局部更新 | 暂不写代码 |
+| 1 | 6b `route_request()` | Node 读取完整 State，只返回自己负责的字段 | `pytest -k todo_6b` |
+| 2 | 6c `assess_search()` | 条件边路由函数读取 State，返回下一节点名称，但不更新 State | `pytest -k todo_6c` |
+| 3 | 6d `rewrite_query()` | 循环所需的新查询和计数为什么必须写回显式 State | `pytest -k todo_6d` |
+| 4 | 6e `request_confirmation()` | `interrupt()` 如何暂停，以及恢复值如何成为它的返回值 | `pytest -k todo_6e` |
+| 5 | 6f `confirmation_route()` | 恢复值写入 State 后，如何严格分流到批准或拒绝节点 | `pytest -k todo_6f` |
+| 6 | 6a `build_agent_graph()` | 注册 Node，连接普通边与条件边，并编译完整工作流 | `pytest -k todo_6a` |
+| 7 | 不再挖新 TODO | 运行三条主路径，观察 State、停止原因、暂停与恢复是否一致 | 完整 TODO6 测试 |
+
+6a 的图结构测试不会执行尚未完成的节点，因此它在技术上可以最先完成；但第一次接触
+LangGraph 时，先理解 6b—6f 的返回值，再连接条件边，更容易知道每条边为什么存在。
+
+下面保留的是完整验收契约。第一次施工时不需要把它一次背完：完成某个子 TODO 后，
+回到对应段落核对边界；完成整张图后，再从头通读一次。
 
 `assess` 的判断优先级固定为：有证据先回答；否则达到 `max_steps` 时停止；否则仅在
 错误可重试且尚未改写时改写一次；最后以证据不足失败。最后一次允许的检索如果成功，
@@ -388,24 +459,22 @@ LangGraph Checkpoint 的 State 必须由可移植的基础类型组成，因此�
 `Message`、`Trace`、重复工具调用检测和停止流程。这里的 `retry_count` 只表示 query
 rewrite 次数，不是工具执行重试次数。
 
-完成 AgentState、Node、Edge、Conditional Edge、Checkpoint、Interrupt 和
-`Command(resume=...)`。
-
-`main` 的练习子任务按依赖顺序编号：**6a 先连接图 → 6b Router → 6c Assess →
-6d Rewrite → 6e Interrupt → 6f 审批条件边**。每个子任务都有独立的纯函数或图结构
-验收；完成当前子任务后，窄测试应只反映当前边界，后续集成测试仍可能因后续 TODO 失败。
+本课完成时，人应能在现有脚手架中辨认 AgentState、Node、普通 Edge、Conditional Edge、
+Checkpoint、Interrupt 和 `Command(resume=...)` 各自承担的职责，并解释它们怎样共同替代
+TODO4 中相应的手工编排。每个子任务都有独立的纯函数或图结构验收；完成当前子任务后，
+窄测试只反映当前边界，完整集成测试仍可能因其他 TODO 尚未完成而失败。
 
 ```powershell
-python -m pytest tests/test_langgraph_workflow.py -k todo_6a
 python -m pytest tests/test_langgraph_workflow.py -k todo_6b
 python -m pytest tests/test_langgraph_workflow.py -k todo_6c
 python -m pytest tests/test_langgraph_workflow.py -k todo_6d
 python -m pytest tests/test_langgraph_workflow.py -k todo_6e
 python -m pytest tests/test_langgraph_workflow.py -k todo_6f
+python -m pytest tests/test_langgraph_workflow.py -k todo_6a
 ```
 
-完成 6a 后应先看到图结构测试通过，而不是执行未完成节点；完成 6b—6f 后再运行完整
-工作流测试。完整测试命令如下：
+每完成一步，只要求对应窄测试变绿；其他窄测试和完整工作流测试仍可因尚未完成的 TODO
+失败。完成 6b—6f 并最后连接 6a 后，再运行完整工作流测试：
 
 ```powershell
 python -m pytest tests/test_langgraph_workflow.py
