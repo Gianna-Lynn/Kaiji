@@ -252,14 +252,9 @@ class LegacyAzusaVectorHttpAdapter:
                 retryable=False,
             ) from exc
 
-    def search_azusa(self, query: str, k: int, mode: str) -> SearchResponse:
-        """通过当前 Rust 向量接口搜索，并恢复 Kaiji 需要的证据字段。"""
+    def _encode_query(self, query: str) -> list[float]:
+        """调用并校验本地向量编码器，不触发任何 HTTP 或后续转换。"""
 
-        if mode != "hnsw":
-            raise AzusaAdapterError(
-                "current Rust Azusa HTTP API only supports hnsw mode",
-                retryable=False,
-            )
         try:
             raw_vector = self._encoder(query)
             if (
@@ -268,16 +263,26 @@ class LegacyAzusaVectorHttpAdapter:
                 or any(
                     isinstance(value, bool)
                     or not isinstance(value, (int, float))
-                    or not math.isfinite(float(value))
+                    or not math.isfinite(value)
                     for value in raw_vector
                 )
             ):
                 raise ValueError("query encoder 必须返回非空的有限数值列表")
-            vector = [float(value) for value in raw_vector]
+            return [float(value) for value in raw_vector]
         except Exception as exc:
             raise AzusaAdapterError(
                 f"legacy Azusa query encoding failed: {exc}", retryable=False
             ) from exc
+
+    def search_azusa(self, query: str, k: int, mode: str) -> SearchResponse:
+        """通过当前 Rust 向量接口搜索，并恢复 Kaiji 需要的证据字段。"""
+
+        if mode != "hnsw":
+            raise AzusaAdapterError(
+                "current Rust Azusa HTTP API only supports hnsw mode",
+                retryable=False,
+            )
+        vector = self._encode_query(query)
 
         try:
             response = self._client.post(
