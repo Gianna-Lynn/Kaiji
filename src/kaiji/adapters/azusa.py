@@ -69,10 +69,22 @@ class AzusaAdapterError(Exception):
     """表示适配器边界内的失败，并保留是否适合重试。"""
 
     def __init__(self, message: str, *, retryable: bool) -> None:
-        if type(retryable) is not bool:
-            raise TypeError("retryable 必须是真正的 bool")
         super().__init__(message)
         self.retryable = retryable
+
+    @property
+    def retryable(self) -> bool:
+        """返回严格布尔类型的重试标记。"""
+
+        return self._retryable
+
+    @retryable.setter
+    def retryable(self, value: bool) -> None:
+        """只允许真正的 bool，避免错误真值进入工作流状态。"""
+
+        if type(value) is not bool:
+            raise TypeError("retryable 必须是真正的 bool")
+        self._retryable = value
 
 
 class AzusaAdapter(Protocol):

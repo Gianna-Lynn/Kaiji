@@ -158,6 +158,14 @@ def test_todo_7d_retryable_constructor_rejects_non_bool(bad: object) -> None:
         AzusaAdapterError("bad retry flag", retryable=bad)  # type: ignore[arg-type]
 
 
+@pytest.mark.parametrize("bad", ["false", "true", 0, 1, None])
+def test_todo_7d_retryable_assignment_rejects_non_bool_and_preserves_value(bad: object) -> None:
+    error = AzusaAdapterError("stable retry flag", retryable=True)
+    with pytest.raises(TypeError):
+        error.retryable = bad  # type: ignore[assignment]
+    assert error.retryable is True
+
+
 def test_todo_7d_argument_schema_is_strict_and_forbids_extra_fields() -> None:
     search_schema = SearchAzusaArgs.model_json_schema()
     chunk_schema = GetChunkArgs.model_json_schema()
@@ -321,15 +329,36 @@ def test_todo_7c_resolver_exception_is_direct_and_non_retryable() -> None:
 
 def test_todo_7c_encoder_narrow_path() -> None:
     calls: list[str] = []
+    http_calls = 0
+    resolver_calls = 0
+
     def encoder(query: str) -> list[float]:
         calls.append(query)
         return [1, 2.0]  # type: ignore[return-value]
-    adapter = LegacyAzusaVectorHttpAdapter("http://azusa.test", query_encoder=encoder, text_resolver=lambda _: "正文")
+
+    def resolver(_: str) -> str:
+        nonlocal resolver_calls
+        resolver_calls += 1
+        return "正文"
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        nonlocal http_calls
+        http_calls += 1
+        raise AssertionError(request.url)
+
+    adapter = LegacyAzusaVectorHttpAdapter(
+        "http://azusa.test",
+        query_encoder=encoder,
+        text_resolver=resolver,
+        transport=httpx.MockTransport(handler),
+    )
     try:
         assert adapter._encode_query("原样问题") == [1.0, 2.0]
     finally:
         adapter.close()
     assert calls == ["原样问题"]
+    assert http_calls == 0
+    assert resolver_calls == 0
 
 
 @pytest.mark.parametrize("invalid", [[], [True], [float("nan")], [float("inf")], ["1"], None, (1, 2)])
@@ -353,6 +382,50 @@ def test_todo_7c_search_narrow_path() -> None:
         assert adapter.search_azusa("q", 1, "hnsw").hits[0].chunk_id == "c"
     finally:
         adapter.close()
+
+
+def test_todo_7c_search_reuses_encoder_and_resolver_helpers() -> None:
+    encoded_queries: list[str] = []
+    resolved_chunks: list[str] = []
+    payloads: list[dict] = []
+
+    def raw_encoder(_: str) -> list[float]:
+        raise AssertionError("search 不得直接调用原始 encoder")
+
+    def raw_resolver(_: str) -> str:
+        raise AssertionError("search 不得直接调用原始 resolver")
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/search":
+            payloads.append(json.loads(request.content))
+            return httpx.Response(200, json={"results": [{"id": 7, "score": 0.5}]})
+        assert request.url.path == "/record/7"
+        return httpx.Response(200, json={"id": 7, "metadata": {"chunk_id": "c"}})
+
+    class HelperAdapter(LegacyAzusaVectorHttpAdapter):
+        def _encode_query(self, query: str) -> list[float]:
+            encoded_queries.append(query)
+            return [0.25, 0.5]
+
+        def _resolve_text(self, chunk_id: str) -> str:
+            resolved_chunks.append(chunk_id)
+            return "helper 正文"
+
+    adapter = HelperAdapter(
+        "http://azusa.test",
+        query_encoder=raw_encoder,
+        text_resolver=raw_resolver,
+        transport=httpx.MockTransport(handler),
+    )
+    try:
+        result = adapter.search_azusa("原始问题", 1, "hnsw")
+    finally:
+        adapter.close()
+
+    assert encoded_queries == ["原始问题"]
+    assert resolved_chunks == ["c"]
+    assert payloads == [{"vector": [0.25, 0.5], "k": 1, "ef_search": 16}]
+    assert result.hits[0].text == "helper 正文"
 
 
 def test_todo_7c_get_chunk_narrow_path_rejects_bad_id_without_resolver() -> None:
@@ -1251,13 +1324,13 @@ class _CorruptedRetryableAdapter(_SpyAdapter):
     def search_azusa(self, query: str, k: int, mode: str) -> SearchResponse:
         self.search_calls.append((query, k, mode))
         error = AzusaAdapterError("corrupted", retryable=False)
-        error.retryable = "false"  # type: ignore[assignment]
+        object.__setattr__(error, "_retryable", "false")
         raise error
 
     def get_chunk_by_id(self, chunk_id: str) -> ChunkResponse:
         self.chunk_calls.append(chunk_id)
         error = AzusaAdapterError("corrupted", retryable=False)
-        error.retryable = "false"  # type: ignore[assignment]
+        object.__setattr__(error, "_retryable", "false")
         raise error
 
 
