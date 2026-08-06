@@ -69,10 +69,22 @@ class AzusaAdapterError(Exception):
     """表示适配器边界内的失败，并保留是否适合重试。"""
 
     def __init__(self, message: str, *, retryable: bool) -> None:
-        if type(retryable) is not bool:
-            raise TypeError("retryable 必须是真正的 bool")
         super().__init__(message)
         self.retryable = retryable
+
+    @property
+    def retryable(self) -> bool:
+        """返回严格布尔类型的重试标记。"""
+
+        return self._retryable
+
+    @retryable.setter
+    def retryable(self, value: bool) -> None:
+        """只允许真正的 bool，避免错误真值进入工作流状态。"""
+
+        if type(value) is not bool:
+            raise TypeError("retryable 必须是真正的 bool")
+        self._retryable = value
 
 
 class AzusaAdapter(Protocol):
@@ -232,6 +244,10 @@ class LegacyAzusaVectorHttpAdapter:
 
         encoder/resolver 的异常或非法返回不可重试；远端 HTTP 两阶段沿用 TODO 7a
         的分类。路径中的 record ID 必须编码。并发、缓存和连接池调优不在练习范围。
+
+        必须通过 ``self._encode_query(query)`` 获得向量，并通过
+        ``self._resolve_text(chunk_id)`` 获得正文；不得绕过 helper 复制 encoder 或
+        resolver 的校验逻辑。
         """
 
         # TODO 7c：实现上述兼容转换与本地/远端两类失败边界。
