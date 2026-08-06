@@ -500,7 +500,9 @@ LangGraph Checkpoint 误当成长期 Memory。
 和有限重试 → ToolResult.error`。
 
 Adapter 返回 Pydantic 对象，handler 返回 JSON 兼容字典，只有 `ToolResult.output` 才是
-Runtime 和模型消费的成功结果。Adapter 只分类、每个方法只发一次请求，不循环重试；
+Runtime 和模型消费的成功结果。Adapter 只分类，不在内部重试同一个 HTTP 操作。Semantic
+search/get 各自只有一个计划内 HTTP 请求；Legacy search 是多阶段操作：一次 `/search`
+加零到多次 `/record/{id}` 请求，不是“每个方法一次请求”。
 Registry 不重新实现 HTTP；ToolExecutor 才负责 attempts、timeout 和有限重试。Semantic
 Adapter 表达稳定网关，Legacy Adapter 是 vector/record 到稳定证据接口的兼容翻译层，
 Mock Adapter 只用于离线确定性教学；本课没有实现 Azusa 内部 HNSW、RAG 或网关服务。
@@ -589,15 +591,13 @@ python -m pytest tests/test_azusa_adapter.py -k todo_7d
 `python -m pytest tests/test_azusa_adapter.py`。
 
 Registry 的两个工具默认 `timeout_seconds=4.0`，而 HTTP Adapter 默认网络 timeout 是
-3.0 秒。Adapter 负责单次网络超时，Executor timeout 是外层最后保护；调用方若增大
-Adapter timeout，也必须传入更大的 `tool_timeout_seconds`。外层超时无法取消已开始的
-线程，因此只读操作也可能在后台完成，本课不把它伪装成可取消。
-
-```powershell
-python -m pytest tests/test_azusa_adapter.py -k todo_7a
-python -m pytest tests/test_azusa_adapter.py -k todo_7b
-python -m pytest tests/test_azusa_adapter.py -k todo_7d
-```
+3.0 秒。httpx timeout 是网络层单次操作/阶段的限制，不是整个 Legacy handler 的总期限；
+Executor timeout 是等待整个 handler 的外层期限，两者是不同范围的计时器，简单的 3 < 4
+不能保证 Legacy 内层一定先结束。外层超时无法取消已开始的线程，重试可能与原调用重叠；
+当前工具只读，因此 v0 接受该限制，有副作用工具不能照搬。`build_azusa_registry` 只
+校验自身 timeout 为有限正数，不能自动知道或证明 Adapter 整体最大耗时。3 秒和 4 秒
+只是教学默认值，不是普遍安全保证；Adapter timeout 增大时由调用方负责重新配置，但
+本课不强制一个无法观察的组合大小关系。
 
 ```powershell
 python -m pytest tests/test_azusa_adapter.py

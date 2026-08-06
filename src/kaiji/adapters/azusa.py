@@ -284,3 +284,8 @@ class MockAzusaAdapter:
             raise AzusaAdapterError(
                 f"unknown chunk_id: {chunk_id}", retryable=False
             ) from exc
+
+    def _encode_query(self, query: str) -> list[float]:
+        """TODO 7c：直接调用并校验本地 encoder，不触发 HTTP 或后续转换。"""
+
+        raise NotImplementedError("TODO 7c：校验 query encoder 输出")
