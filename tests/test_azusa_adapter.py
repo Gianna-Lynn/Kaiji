@@ -388,6 +388,17 @@ def test_todo_7c_get_chunk_narrow_path_returns_resolved_chunk_without_http() -> 
     assert calls == ["原样 chunk"]
 
 
+@pytest.mark.parametrize("invalid", ["", "   ", None, 7])
+def test_todo_7c_get_chunk_wraps_resolver_failures_without_http(invalid: object) -> None:
+    adapter = LegacyAzusaVectorHttpAdapter("http://azusa.test", query_encoder=lambda _: [1], text_resolver=lambda _: invalid)  # type: ignore[arg-type]
+    try:
+        with pytest.raises(AzusaAdapterError) as caught:
+            adapter.get_chunk_by_id("c")
+    finally:
+        adapter.close()
+    assert caught.value.retryable is False
+
+
 def test_todo_7a_semantic_http_forwards_non_default_search_arguments() -> None:
     """第二组非默认参数防止 Adapter 把示例值硬编码进请求体。"""
 
@@ -707,7 +718,7 @@ def test_todo_7c_search_forwards_input_encodes_ids_and_maps_all_hits() -> None:
     ]
 
 
-def test_legacy_adapter_rejects_unsupported_mode_before_network_call() -> None:
+def test_todo_7c_search_rejects_unsupported_mode_before_network_call() -> None:
     requests = 0
 
     def handler(request: httpx.Request) -> httpx.Response:
@@ -746,7 +757,7 @@ def test_legacy_adapter_rejects_unsupported_mode_before_network_call() -> None:
         ("invalid-schema", True),
     ],
 )
-def test_legacy_adapter_classifies_both_http_stages(
+def test_todo_7c_search_classifies_both_http_stages(
     stage: str,
     failure: str,
     retryable: bool,
@@ -797,7 +808,7 @@ def test_legacy_adapter_classifies_both_http_stages(
         {"id": 8, "metadata": {"chunk_id": "c7"}},
     ],
 )
-def test_legacy_adapter_rejects_invalid_record_contract(
+def test_todo_7c_search_rejects_invalid_record_contract(
     metadata_or_id: dict,
 ) -> None:
     def handler(request: httpx.Request) -> httpx.Response:
@@ -958,7 +969,7 @@ def test_legacy_rejects_invalid_resolver_output_as_non_retryable(
 
 
 @pytest.mark.parametrize("invalid_chunk_id", [None, "", "   ", 0, False, [], {}])
-def test_legacy_requires_string_chunk_id_in_record_metadata(
+def test_todo_7c_search_requires_string_chunk_id_in_record_metadata(
     invalid_chunk_id: object,
 ) -> None:
     resolver_calls = 0
