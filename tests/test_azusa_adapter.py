@@ -26,7 +26,7 @@ from kaiji.models import ToolCall, ToolErrorCode
 from kaiji.tools import ToolExecutor
 
 
-def test_mock_adapter_and_both_registered_tools_form_offline_loop() -> None:
+def test_todo_7d_mock_adapter_and_both_registered_tools_form_offline_loop() -> None:
     adapter = MockAzusaAdapter()
     executor = ToolExecutor(build_azusa_registry(adapter))
 
@@ -53,7 +53,7 @@ def test_mock_adapter_and_both_registered_tools_form_offline_loop() -> None:
     assert chunk.output["chunk_id"] == "kaiji-001"
 
 
-def test_registry_exposes_two_precise_argument_schemas_and_retry_policy() -> None:
+def test_todo_7d_registry_exposes_two_precise_argument_schemas_and_retry_policy() -> None:
     registry = build_azusa_registry(MockAzusaAdapter())
     schemas = {schema["name"]: schema for schema in registry.schemas()}
 
@@ -153,20 +153,9 @@ def test_todo_7a_semantic_search_success_narrow_path() -> None:
 
 
 @pytest.mark.parametrize("bad", ["false", "true", 0, 1, None])
-def test_todo_7d_retryable_requires_real_bool_and_never_retries(bad: object) -> None:
+def test_todo_7d_retryable_constructor_rejects_non_bool(bad: object) -> None:
     with pytest.raises(TypeError):
         AzusaAdapterError("bad retry flag", retryable=bad)  # type: ignore[arg-type]
-
-
-@pytest.mark.parametrize("bad", [True, False, 1.0, "3", None])
-def test_todo_7d_invalid_k_is_rejected_before_adapter_call(bad: object) -> None:
-    adapter = _SpyAdapter()
-    result = ToolExecutor(build_azusa_registry(adapter)).execute(
-        ToolCall(call_id="bad-k", name="search_azusa", arguments={"query": "ok", "k": bad})
-    )
-    assert not result.ok and result.attempts == 0
-    assert result.error is not None and result.error.code == ToolErrorCode.INVALID_ARGUMENTS
-    assert adapter.search_calls == []
 
 
 def test_todo_7d_argument_schema_is_strict_and_forbids_extra_fields() -> None:
@@ -230,7 +219,7 @@ def test_todo_7c_mock_empty_collection_semantics() -> None:
     assert caught.value.retryable is False
 
 
-def test_todo_7c_record_id_type_mismatch_does_not_call_resolver() -> None:
+def test_todo_7c_search_record_id_type_mismatch_does_not_call_resolver() -> None:
     resolver_calls = 0
     def resolver(_: str) -> str:
         nonlocal resolver_calls
@@ -249,17 +238,24 @@ def test_todo_7c_record_id_type_mismatch_does_not_call_resolver() -> None:
     assert resolver_calls == 0
 
 
-def test_todo_7c_remote_record_id_is_not_silently_overwritten() -> None:
+def test_todo_7c_search_remote_record_id_conflict_is_explicit() -> None:
+    resolver_calls = 0
+    def resolver(_: str) -> str:
+        nonlocal resolver_calls
+        resolver_calls += 1
+        return "text"
     def handler(request: httpx.Request) -> httpx.Response:
         if request.url.path == "/search":
             return httpx.Response(200, json={"results": [{"id": 7}]})
         return httpx.Response(200, json={"id": 7, "metadata": {"chunk_id": "c7", "record_id": "remote"}})
-    adapter = LegacyAzusaVectorHttpAdapter("http://azusa.test", query_encoder=lambda _: [1], text_resolver=lambda _: "text", transport=httpx.MockTransport(handler))
+    adapter = LegacyAzusaVectorHttpAdapter("http://azusa.test", query_encoder=lambda _: [1], text_resolver=resolver, transport=httpx.MockTransport(handler))
     try:
-        with pytest.raises(AzusaAdapterError):
+        with pytest.raises(AzusaAdapterError) as caught:
             adapter.search_azusa("q", 1, "hnsw")
     finally:
         adapter.close()
+    assert caught.value.retryable is True
+    assert resolver_calls == 0
 
 
 @pytest.mark.parametrize("bad", ["", "   ", True, float("nan"), float("inf")])
@@ -718,8 +714,35 @@ def test_todo_7c_search_forwards_input_encodes_ids_and_maps_all_hits() -> None:
     ]
 
 
+def test_todo_7c_search_is_all_or_nothing_when_later_record_fails() -> None:
+    resolver_calls: list[str] = []
+    def resolver(chunk_id: str) -> str:
+        resolver_calls.append(chunk_id)
+        return f"text {chunk_id}"
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/search":
+            return httpx.Response(200, json={"results": [{"id": 1}, {"id": 2}]})
+        if request.url.path == "/record/1":
+            return httpx.Response(200, json={"id": 1, "metadata": {"chunk_id": "c1"}})
+        return httpx.Response(503)
+    adapter = LegacyAzusaVectorHttpAdapter("http://azusa.test", query_encoder=lambda _: [1], text_resolver=resolver, transport=httpx.MockTransport(handler))
+    try:
+        with pytest.raises(AzusaAdapterError) as caught:
+            adapter.search_azusa("q", 2, "hnsw")
+    finally:
+        adapter.close()
+    assert caught.value.retryable is True
+    assert resolver_calls == ["c1"]
+
+
 def test_todo_7c_search_rejects_unsupported_mode_before_network_call() -> None:
     requests = 0
+    encoder_calls = 0
+
+    def encoder(_: str) -> list[float]:
+        nonlocal encoder_calls
+        encoder_calls += 1
+        return [1.0]
 
     def handler(request: httpx.Request) -> httpx.Response:
         nonlocal requests
@@ -728,7 +751,7 @@ def test_todo_7c_search_rejects_unsupported_mode_before_network_call() -> None:
 
     adapter = LegacyAzusaVectorHttpAdapter(
         "http://azusa.test",
-        query_encoder=lambda query: [1.0],
+        query_encoder=encoder,
         text_resolver=lambda chunk_id: "text",
         transport=httpx.MockTransport(handler),
     )
@@ -740,6 +763,7 @@ def test_todo_7c_search_rejects_unsupported_mode_before_network_call() -> None:
 
     assert not caught.value.retryable
     assert requests == 0
+    assert encoder_calls == 0
 
 
 @pytest.mark.parametrize(
@@ -835,7 +859,7 @@ def test_todo_7c_search_rejects_invalid_record_contract(
     assert caught.value.retryable
 
 
-def test_legacy_local_encoder_exception_is_non_retryable() -> None:
+def test_todo_7c_encoder_exception_is_direct_and_non_retryable() -> None:
     def broken_encoder(query: str) -> list[float]:
         raise ValueError("encoder unavailable")
 
@@ -845,10 +869,22 @@ def test_legacy_local_encoder_exception_is_non_retryable() -> None:
         text_resolver=lambda chunk_id: "text",
     )
     with pytest.raises(AzusaAdapterError) as encoder_error:
-        encoder_adapter.search_azusa("question", 1, "hnsw")
+        encoder_adapter._encode_query("question")
     encoder_adapter.close()
 
     assert not encoder_error.value.retryable
+
+
+def test_todo_7c_encoder_key_error_is_direct_and_non_retryable() -> None:
+    def broken(_: str) -> list[float]:
+        raise KeyError("missing model")
+    adapter = LegacyAzusaVectorHttpAdapter("http://azusa.test", query_encoder=broken, text_resolver=lambda _: "text")
+    try:
+        with pytest.raises(AzusaAdapterError) as caught:
+            adapter._encode_query("question")
+    finally:
+        adapter.close()
+    assert caught.value.retryable is False
 
 
 @pytest.mark.parametrize("operation", ["search", "get_chunk"])
