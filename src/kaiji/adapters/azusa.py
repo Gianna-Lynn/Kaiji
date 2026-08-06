@@ -8,41 +8,69 @@ from typing import Any, Protocol
 from urllib.parse import quote
 
 import httpx
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, Field, StrictInt, StrictStr, field_validator
+
+
+def _non_blank(value: object, field_name: str) -> str:
+    """拒绝空值和纯空白字符串，同时不改写合法字符串。"""
+    if not isinstance(value, str) or not value.strip():
+        raise ValueError(f"{field_name} 必须是非空且非纯空白字符串")
+    return value
 
 
 class SearchHit(BaseModel):
     """表示一条由 Azusa 返回并可作为证据使用的检索命中。"""
 
-    chunk_id: str = Field(min_length=1)
-    text: str = Field(min_length=1)
-    score: float | None = None
+    chunk_id: StrictStr
+    text: StrictStr
+    score: int | float | None = None
     source: str | None = None
-    page: int | None = None
+    page: StrictInt | None = None
     metadata: dict[str, Any] = Field(default_factory=dict)
+
+    _valid_strings = field_validator("chunk_id", "text")(
+        lambda value, info: _non_blank(value, info.field_name)
+    )
+
+    @field_validator("score", mode="before")
+    @classmethod
+    def score_is_finite_number(cls, value: object) -> object:
+        if value is not None and (isinstance(value, bool) or not isinstance(value, (int, float)) or not math.isfinite(value)):
+            raise ValueError("score 必须是有限数值")
+        return value
 
 
 class SearchResponse(BaseModel):
     """封装 Azusa 检索命中及实际使用的检索模式。"""
 
     hits: list[SearchHit]
-    mode: str = Field(min_length=1)
+    mode: StrictStr
+
+    _valid_mode = field_validator("mode")(
+        lambda value, info: _non_blank(value, info.field_name)
+    )
 
 
 class ChunkResponse(BaseModel):
     """表示按稳定 chunk_id 取回的完整证据正文与元数据。"""
 
-    chunk_id: str = Field(min_length=1)
-    text: str = Field(min_length=1)
+    chunk_id: StrictStr
+    text: StrictStr
     source: str | None = None
-    page: int | None = None
+    page: StrictInt | None = None
     metadata: dict[str, Any] = Field(default_factory=dict)
+
+    _valid_strings = field_validator("chunk_id", "text")(
+        lambda value, info: _non_blank(value, info.field_name)
+    )
 
 
 class AzusaAdapterError(Exception):
     """表示适配器边界内的失败，并保留是否适合重试。"""
 
     def __init__(self, message: str, *, retryable: bool) -> None:
+        if type(retryable) is not bool:
+            raise TypeError("retryable 必须是真正的 bool")
         super().__init__(message)
         self.retryable = retryable
 
@@ -58,8 +86,22 @@ class AzusaAdapter(Protocol):
 class _LegacySearchItem(BaseModel):
     """校验旧版 ``/search`` 中一条检索结果的必要字段。"""
 
-    id: int | str
-    score: float | None = None
+    id: StrictInt | StrictStr
+    score: int | float | None = None
+
+    @field_validator("id")
+    @classmethod
+    def id_is_valid(cls, value: object) -> object:
+        if isinstance(value, str) and not value.strip():
+            raise ValueError("id 不得为空或纯空白")
+        return value
+
+    @field_validator("score", mode="before")
+    @classmethod
+    def score_is_finite_number(cls, value: object) -> object:
+        if value is not None and (isinstance(value, bool) or not isinstance(value, (int, float)) or not math.isfinite(value)):
+            raise ValueError("score 必须是有限数值")
+        return value
 
 
 class _LegacySearchResponse(BaseModel):
@@ -71,8 +113,15 @@ class _LegacySearchResponse(BaseModel):
 class _LegacyRecordResponse(BaseModel):
     """校验旧版 ``/record/{id}`` 中 Kaiji 依赖的元数据。"""
 
-    id: int | str
+    id: StrictInt | StrictStr
     metadata: dict[str, Any]
+
+    @field_validator("id")
+    @classmethod
+    def id_is_valid(cls, value: object) -> object:
+        if isinstance(value, str) and not value.strip():
+            raise ValueError("id 不得为空或纯空白")
+        return value
 
 
 class AzusaHttpAdapter:
@@ -122,7 +171,7 @@ class AzusaHttpAdapter:
             raise AzusaAdapterError(
                 f"Azusa search request failed: {exc}", retryable=True
             ) from exc
-        except ValueError as exc:
+        except (ValueError, TypeError) as exc:
             raise AzusaAdapterError(
                 f"Azusa search returned an invalid response: {exc}",
                 retryable=True,
@@ -152,7 +201,7 @@ class AzusaHttpAdapter:
             raise AzusaAdapterError(
                 f"Azusa chunk lookup request failed: {exc}", retryable=True
             ) from exc
-        except ValueError as exc:
+        except (ValueError, TypeError) as exc:
             raise AzusaAdapterError(
                 f"Azusa chunk lookup returned an invalid response: {exc}",
                 retryable=True,
@@ -243,12 +292,11 @@ class LegacyAzusaVectorHttpAdapter:
                 record = self._client.get(f"/record/{quote(record_id, safe='')}")
                 record.raise_for_status()
                 body = _LegacyRecordResponse.model_validate(record.json())
-                if str(body.id) != record_id:
-                    raise AzusaAdapterError(
-                        "legacy Azusa record ID does not match the search result",
-                        retryable=True,
-                    )
+                if type(body.id) is not type(item.id) or body.id != item.id:
+                    raise ValueError("legacy Azusa record ID does not match the search result")
                 metadata = dict(body.metadata)
+                if "record_id" in metadata:
+                    raise ValueError("legacy metadata 保留字段 record_id 不得由远端提供")
                 raw_chunk_id = metadata.get("chunk_id")
                 if not isinstance(raw_chunk_id, str) or not raw_chunk_id.strip():
                     raise AzusaAdapterError(
@@ -257,8 +305,7 @@ class LegacyAzusaVectorHttpAdapter:
                     )
                 chunk_id = raw_chunk_id
                 text = self._resolve_text(chunk_id)
-                hit_metadata = dict(metadata)
-                hit_metadata["record_id"] = item.id
+                hit_metadata = {**metadata, "record_id": item.id}
                 hits.append(
                     SearchHit(
                         chunk_id=chunk_id,
@@ -281,7 +328,7 @@ class LegacyAzusaVectorHttpAdapter:
             raise AzusaAdapterError(
                 f"legacy Azusa request failed: {exc}", retryable=True
             ) from exc
-        except ValueError as exc:
+        except (ValueError, TypeError) as exc:
             raise AzusaAdapterError(
                 f"legacy Azusa returned an invalid response: {exc}", retryable=True
             ) from exc
@@ -289,6 +336,10 @@ class LegacyAzusaVectorHttpAdapter:
     def get_chunk_by_id(self, chunk_id: str) -> ChunkResponse:
         """用注入的正文解析器按 chunk_id 构造兼容响应。"""
 
+        try:
+            chunk_id = _non_blank(chunk_id, "chunk_id")
+        except ValueError as exc:
+            raise AzusaAdapterError(str(exc), retryable=False) from exc
         return ChunkResponse(chunk_id=chunk_id, text=self._resolve_text(chunk_id))
 
     def close(self) -> None:
@@ -300,14 +351,11 @@ class LegacyAzusaVectorHttpAdapter:
 class MockAzusaAdapter:
     """提供无需网络、GPU 或真实 Azusa 服务的确定性检索结果。"""
 
-    model_config = ConfigDict(arbitrary_types_allowed=True)
-
     def __init__(self, chunks: list[ChunkResponse] | None = None) -> None:
         self._chunks = {
             chunk.chunk_id: chunk
             for chunk in (
-                chunks
-                or [
+                chunks if chunks is not None else [
                     ChunkResponse(
                         chunk_id="kaiji-001",
                         text="Kaiji owns tool, state, workflow, trace, and eval.",

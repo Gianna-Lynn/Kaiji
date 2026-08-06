@@ -142,6 +142,170 @@ def test_semantic_http_adapter_uses_exact_search_contract_and_maps_fields() -> N
     )
 
 
+def test_todo_7a_semantic_search_success_narrow_path() -> None:
+    adapter = AzusaHttpAdapter("http://azusa.test", transport=httpx.MockTransport(lambda _: httpx.Response(200, json={"hits": [], "mode": "hybrid"})))
+    try:
+        assert adapter.search_azusa("question", 2, "hybrid") == SearchResponse(hits=[], mode="hybrid")
+    finally:
+        adapter.close()
+
+
+@pytest.mark.parametrize("bad", ["false", "true", 0, 1, None])
+def test_todo_7d_retryable_requires_real_bool_and_never_retries(bad: object) -> None:
+    with pytest.raises(TypeError):
+        AzusaAdapterError("bad retry flag", retryable=bad)  # type: ignore[arg-type]
+
+
+@pytest.mark.parametrize("bad", [True, False, 1.0, "3", None])
+def test_todo_7d_invalid_k_is_rejected_before_adapter_call(bad: object) -> None:
+    adapter = _SpyAdapter()
+    result = ToolExecutor(build_azusa_registry(adapter)).execute(
+        ToolCall(call_id="bad-k", name="search_azusa", arguments={"query": "ok", "k": bad})
+    )
+    assert not result.ok and result.attempts == 0
+    assert result.error is not None and result.error.code == ToolErrorCode.INVALID_ARGUMENTS
+    assert adapter.search_calls == []
+
+
+def test_todo_7d_argument_schema_is_strict_and_forbids_extra_fields() -> None:
+    search_schema = SearchAzusaArgs.model_json_schema()
+    chunk_schema = GetChunkArgs.model_json_schema()
+    assert search_schema["additionalProperties"] is False
+    assert chunk_schema["additionalProperties"] is False
+    with pytest.raises(Exception):
+        SearchAzusaArgs(query="ok", unexpected=True)
+    with pytest.raises(Exception):
+        GetChunkArgs(chunk_id="c1", unexpected=True)
+
+
+def test_todo_7d_registry_timeout_contract_is_explicit() -> None:
+    registry = build_azusa_registry(MockAzusaAdapter())
+    assert registry.get("search_azusa").timeout_seconds == 4.0  # type: ignore[union-attr]
+    assert registry.get("get_chunk_by_id").timeout_seconds == 4.0  # type: ignore[union-attr]
+    for bad in [True, False, 0, -1, float("nan"), float("inf"), "4"]:
+        with pytest.raises((TypeError, ValueError)):
+            build_azusa_registry(MockAzusaAdapter(), tool_timeout_seconds=bad)  # type: ignore[arg-type]
+
+
+def test_todo_7c_mock_empty_collection_semantics() -> None:
+    empty = MockAzusaAdapter(chunks=[])
+    assert empty.search_azusa("anything", 3, "hybrid").hits == []
+    with pytest.raises(AzusaAdapterError) as caught:
+        empty.get_chunk_by_id("missing")
+    assert caught.value.retryable is False
+
+
+def test_todo_7c_record_id_type_mismatch_does_not_call_resolver() -> None:
+    resolver_calls = 0
+    def resolver(_: str) -> str:
+        nonlocal resolver_calls
+        resolver_calls += 1
+        return "text"
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/search":
+            return httpx.Response(200, json={"results": [{"id": 7}]})
+        return httpx.Response(200, json={"id": "7", "metadata": {"chunk_id": "c7"}})
+    adapter = LegacyAzusaVectorHttpAdapter("http://azusa.test", query_encoder=lambda _: [1], text_resolver=resolver, transport=httpx.MockTransport(handler))
+    try:
+        with pytest.raises(AzusaAdapterError):
+            adapter.search_azusa("q", 1, "hnsw")
+    finally:
+        adapter.close()
+    assert resolver_calls == 0
+
+
+def test_todo_7c_remote_record_id_is_not_silently_overwritten() -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/search":
+            return httpx.Response(200, json={"results": [{"id": 7}]})
+        return httpx.Response(200, json={"id": 7, "metadata": {"chunk_id": "c7", "record_id": "remote"}})
+    adapter = LegacyAzusaVectorHttpAdapter("http://azusa.test", query_encoder=lambda _: [1], text_resolver=lambda _: "text", transport=httpx.MockTransport(handler))
+    try:
+        with pytest.raises(AzusaAdapterError):
+            adapter.search_azusa("q", 1, "hnsw")
+    finally:
+        adapter.close()
+
+
+@pytest.mark.parametrize("bad", ["", "   ", True, float("nan"), float("inf")])
+def test_todo_7a_external_response_evidence_boundaries(bad: object) -> None:
+    payload = {"hits": [{"chunk_id": "c", "text": "text", "score": bad}], "mode": "hybrid"}
+    adapter = AzusaHttpAdapter("http://azusa.test", transport=httpx.MockTransport(lambda _: httpx.Response(200, json=payload)))
+    try:
+        with pytest.raises(AzusaAdapterError):
+            adapter.search_azusa("q", 1, "hybrid")
+    finally:
+        adapter.close()
+
+
+@pytest.mark.parametrize("status, retryable", [(301, False), (429, False), (499, False), (500, True), (599, True)])
+def test_todo_7a_http_status_policy_includes_redirect_rate_limit_and_edges(status: int, retryable: bool) -> None:
+    adapter = AzusaHttpAdapter("http://azusa.test", transport=httpx.MockTransport(lambda _: httpx.Response(status)))
+    try:
+        with pytest.raises(AzusaAdapterError) as caught:
+            adapter.search_azusa("q", 1, "hybrid")
+    finally:
+        adapter.close()
+    assert caught.value.retryable is retryable
+
+
+def test_todo_7b_semantic_get_chunk_narrow_path() -> None:
+    adapter = AzusaHttpAdapter("http://azusa.test", transport=httpx.MockTransport(lambda _: httpx.Response(200, json={"chunk_id": "c", "text": "e"})))
+    try:
+        assert adapter.get_chunk_by_id("c").text == "e"
+    finally:
+        adapter.close()
+
+
+def test_todo_7c_resolver_narrow_path() -> None:
+    adapter = LegacyAzusaVectorHttpAdapter("http://azusa.test", query_encoder=lambda _: [1], text_resolver=lambda _: "正文")
+    try:
+        assert adapter.get_chunk_by_id("c").text == "正文"
+    finally:
+        adapter.close()
+
+
+def test_todo_7c_encoder_narrow_path() -> None:
+    requests = 0
+    def handler(_: httpx.Request) -> httpx.Response:
+        nonlocal requests
+        requests += 1
+        return httpx.Response(200, json={"results": []})
+    adapter = LegacyAzusaVectorHttpAdapter("http://azusa.test", query_encoder=lambda _: [1, 2.0], text_resolver=lambda _: "正文", transport=httpx.MockTransport(handler))
+    try:
+        assert adapter.search_azusa("q", 1, "hnsw").hits == []
+    finally:
+        adapter.close()
+    assert requests == 1
+
+
+def test_todo_7c_search_narrow_path() -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/search":
+            return httpx.Response(200, json={"results": [{"id": 7, "score": 0.5}]})
+        return httpx.Response(200, json={"id": 7, "metadata": {"chunk_id": "c"}})
+    adapter = LegacyAzusaVectorHttpAdapter("http://azusa.test", query_encoder=lambda _: [1], text_resolver=lambda _: "正文", transport=httpx.MockTransport(handler))
+    try:
+        assert adapter.search_azusa("q", 1, "hnsw").hits[0].chunk_id == "c"
+    finally:
+        adapter.close()
+
+
+def test_todo_7c_get_chunk_narrow_path_rejects_bad_id_without_resolver() -> None:
+    calls = 0
+    def resolver(_: str) -> str:
+        nonlocal calls
+        calls += 1
+        return "正文"
+    adapter = LegacyAzusaVectorHttpAdapter("http://azusa.test", query_encoder=lambda _: [1], text_resolver=resolver)
+    try:
+        with pytest.raises(AzusaAdapterError) as caught:
+            adapter.get_chunk_by_id("   ")
+    finally:
+        adapter.close()
+    assert caught.value.retryable is False and calls == 0
+
+
 def test_semantic_http_adapter_forwards_non_default_search_arguments() -> None:
     """第二组非默认参数防止 Adapter 把示例值硬编码进请求体。"""
 
