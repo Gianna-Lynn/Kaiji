@@ -382,7 +382,7 @@ Router Node
   │               ├─ 达到上限   → Max Steps → END
   │               └─ 不可恢复   → Failure → END
   │
-  └─ confirm → Confirmation Node
+  └─ confirm → Confirmation Node(执行request_confirmation, 等待人工决定)
                   ↓
              interrupt(payload) 暂停并保存 Checkpoint
                   ↓
@@ -390,7 +390,7 @@ Router Node
                   ↓
              Command(resume=decision)
                   ↓
-             节点返回 {"approved": decision}
+             Confirmation Node返回 {"approved": decision}(人工决定)
                   ↓
              confirmation_route(state)〔条件边判断〕
                   ├─ approved → Approved → END

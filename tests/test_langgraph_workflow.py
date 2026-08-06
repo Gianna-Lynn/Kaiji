@@ -35,7 +35,7 @@ class AlwaysEmptyAdapter(MockAzusaAdapter):
 
 
 class RecordingAdapter(MockAzusaAdapter):
-    """记录工作流每次真正发送给 Azusa 的搜索参数。"""
+    """记录工作流每次真正发送给 Azusa 的搜索参数, 并调用search_azusa"""
 
     def __init__(self) -> None:
         super().__init__()
@@ -44,6 +44,35 @@ class RecordingAdapter(MockAzusaAdapter):
     def search_azusa(self, query: str, k: int, mode: str) -> SearchResponse:
         self.calls.append((query, k, mode))
         return super().search_azusa(query, k, mode)
+
+
+class EmptyThenSuccessAdapter:
+    """专用于测试 ``test_graph_rewrites_empty_query_and_recovers_once``。
+
+    第一次搜索返回空证据，第二次搜索返回一条确定性证据；第三次调用
+    直接失败，以便测试同时约束“只改写一次”和“只执行两次检索”。
+    """
+
+    def __init__(self) -> None:
+        self.calls: list[tuple[str, int, str]] = []
+
+    def search_azusa(self, query: str, k: int, mode: str) -> SearchResponse:
+        """记录查询，并按调用次数模拟空证据到恢复成功的过程。"""
+
+        self.calls.append((query, k, mode))
+        if len(self.calls) == 1:
+            return SearchResponse(hits=[], mode=mode)
+        if len(self.calls) == 2:
+            return SearchResponse(
+                hits=[
+                    SearchHit(
+                        chunk_id="recovered",
+                        text="改写后恢复得到的测试证据",
+                    )
+                ],
+                mode=mode,
+            )
+        raise AssertionError("改写恢复后不应再次调用 Adapter")
 
 
 class TwoHitAdapter(MockAzusaAdapter):
@@ -374,7 +403,7 @@ def test_graph_answer_only_cites_the_evidence_used_for_its_text() -> None:
 def test_graph_rewrites_empty_query_and_recovers_once() -> None:
     """空证据应触发恰好一次改写，两个计数器必须各自计数。"""
 
-    adapter = RecordingAdapter()
+    adapter = EmptyThenSuccessAdapter()
     graph = build_agent_graph(adapter)
 
     result = run_graph(graph, "unfindable-token", thread_id="empty")

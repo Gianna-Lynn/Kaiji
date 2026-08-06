@@ -14,24 +14,24 @@ from kaiji.models import StopReason
 
 class AgentState(TypedDict, total=False):
     """描述 LangGraph 节点间共享的状态及各字段的唯一职责。
-
-    ``total=False`` 表示节点可以只返回自己负责更新的字段；LangGraph 会把这份
-    局部更新合并进当前 State，而不是用返回字典替换整份状态。因此节点不得顺手
-    返回或清空不属于自己职责的字段。它不表示运行中的 State 可以随意缺少基础字段：
-    ``_initial_state`` 会在首次进入图时建立完整状态，后续节点依赖这项不变量。
-
-    ``question`` 保存不可变的原始用户问题，``rewritten_query`` 保存当前真正
-    送往 Azusa 的查询。``step_count`` 只统计 search 节点执行次数，也就是
-    检索尝试次数；``retry_count`` 只统计 query rewrite 次数；``max_steps``
-    只限制检索尝试次数，并不统计 router、answer 等其他图节点。
-
-    ``route`` 是 router 选择的下一条边，``evidence`` 是校验后的检索命中，
-    ``error`` 与 ``error_retryable`` 描述最近一次失败。``pending_action``、
-    ``approved`` 分别保存待确认的模拟副作用和人的恢复决定。``answer`` 与
-    ``stop_reason`` 只由终止节点写入，保存可移植的停止原因字符串。
+    TypedDict 表示AgentState的运行时是一个dict.
+    ``total=False`` 表示: State    的某个或者某些字段, 在某个或者某些节点之前尚未出现.
+    节点返回字段的时候, 只返回自己负责更新的字段.LangGraph 会把这份局部更新合并进当前 State，
+    而不是用节点返回的字典替换整份状态。因此节点不得顺手返回或清空不属于自己职责的字段。
+    运行中的 State 也不可以随意缺少基础字段.  
+    ``_initial_state`` 会在首次进入图时建立完整状态，后续节点依赖这项不变量。  
+    ``question`` 保存不可变的原始用户问题，  
+    ``rewritten_query`` 保存当前真正送往 Azusa 的查询。  
+    ``step_count`` 只统计 search 节点执行次数，也就是检索尝试次数；  
+    ``retry_count`` 只统计 query rewrite 次数；  
+    ``max_steps`` 只限制检索尝试次数，并不统计 router、answer 等其他图节点。  
+    ``route`` 是 router 选择的下一条边，``evidence`` 是校验后的检索命中，  
+    ``error`` 与 ``error_retryable`` 描述最近一次检索失败及其恢复属性。  
+    ``pending_action``、``approved`` 分别保存待确认的模拟副作用和人的恢复决定。  
+    ``answer`` 与``stop_reason`` 只由终止节点写入，保存可移植的停止原因字符串。  
     """
 
-    question: str
+    question: str   # 这不是在声明类成员变量, 而是在声明字典的键类型.
     rewritten_query: str
     route: Literal["search", "confirm"]
     evidence: list[dict[str, Any]]
@@ -52,7 +52,7 @@ def _initial_state(question: str, *, max_steps: int) -> AgentState:
     if type(max_steps) is not int or max_steps < 1:
         raise ValueError("max_steps 必须至少为 1")
 
-    return AgentState(
+    return AgentState(  # 初始State 里还没有 route。route 将由 Router Node 第一次运行时产生。
         question=question,
         rewritten_query=question,
         evidence=[],
@@ -71,14 +71,24 @@ def _initial_state(question: str, *, max_steps: int) -> AgentState:
 def route_request(state: AgentState) -> dict[str, str | None]:
     """根据原始问题选择检索或人工确认，并只返回 Router 负责的字段。"""
 
-    # TODO 6b：检查原始 question。大小写归一化后，只要包含 delete、
-    # send 或 publish 之一，就返回 confirm，并把未改写的原问题保存到
-    # pending_action；其余问题返回 search，不能在路由阶段调用 Adapter。
-    raise NotImplementedError("TODO 6b：实现只读检索与副作用确认路由")
-
+    # TODO 6b：检查原始 question。
+    # 大小写归一化后，只要包含 delete、send 或 publish 之一，
+    # 就返回 confirm，并把未改写的原问题保存到pending_action；
+    # 其余问题返回 search，不能在路由阶段调用 Adapter。
+    # 本节点只返回自己负责更新的state字段, 不得顺手返回或者清空不属于自己职责的字段, 也不可以就地修改字段
+    question = state["question"].lower()     
+    if any (kw in question for kw in ("delete", "send", "publish")):
+        return {
+            "route" : "confirm",
+            "pending_action" : state["question"],
+        }
+    else:
+        return {
+            "route" : "search",
+        }
 
 def assess_search(state: AgentState) -> str:
-    """按固定优先级选择搜索后的下一节点。"""
+    """按固定优先级, 选择搜索后的下一节点。"""
 
     # TODO 6c：依照以下优先级返回 answer、max_steps、rewrite 或 failure：
     # 1. 有证据时优先 answer；
@@ -86,8 +96,14 @@ def assess_search(state: AgentState) -> str:
     # 3. 尚有预算、error_retryable 为真且 retry_count == 0 时返回 rewrite；
     # 4. 其他情况返回 failure。
     # 这里只读取显式 State，不得另设隐藏的局部重试计数器。
-    raise NotImplementedError("TODO 6c：实现搜索结果的条件边判断")
-
+    if state["evidence"]:   # 不能用is not None判定, 因为state["evidence"]是list[dict], list无论是否为空, 本身都不是None
+                            # 可以利用空列表的假值特性, 直接判断这个列表, 有东西返回True, 没东西返回False
+        return "answer"
+    if not state["evidence"] and state["step_count"] >= state["max_steps"]:
+        return "max_steps"
+    if state["step_count"] < state["max_steps"] and state["error_retryable"] and state["retry_count"] == 0:
+        return "rewrite"
+    return "failure"
 
 def rewrite_query(state: AgentState) -> dict[str, str | int]:
     """确定性改写查询，并只返回查询和改写计数的局部更新。"""
@@ -95,7 +111,16 @@ def rewrite_query(state: AgentState) -> dict[str, str | int]:
     # TODO 6d：返回 rewritten_query 与递增后的 retry_count，且只能返回这两个键。
     # 改写必须确定、非空、不同于 question，并保留原始 question；具体追加的
     # 检索词由人决定，但不能修改输入 State 或其他字段。
-    raise NotImplementedError("TODO 6d：实现一次有界的查询改写")
+    
+    # rewrite是一种机械加词, 思路是: 反正都要重试了，顺手给查询加点料，万一就成了呢——成了就赚，没成也不亏
+    # 适用于下面的情况: 
+    # 1. 瞬态失败，不是查询的问题. 但是如果不改查询就重试, 可能打到同一台故障节点、命中同一个缓存错误. 加一点词儿, 可能绕开缓存或者路由的问题.
+    # 2. 避免向量检索中遇到冷门词 3. 加一个关键词, 试图命中稀疏关键词搜索, 如BM25.
+
+    return{
+        "rewritten_query" : state["rewritten_query"] + " 详细 文档 说明",
+        "retry_count" : state["retry_count"] + 1,
+    }
 
 
 def request_confirmation(state: AgentState) -> dict[str, bool]:
@@ -104,7 +129,62 @@ def request_confirmation(state: AgentState) -> dict[str, bool]:
     # TODO 6e：调用 interrupt，载荷必须包含稳定的 kind、原始 action 和非空中文
     # question。interrupt 返回的是恢复值，不是载荷本身；只接受真正的 bool，
     # "false"、"拒绝"、0、1 和其他类型必须明确失败，不能使用 bool() 偷偷转换。
-    raise NotImplementedError("TODO 6e：实现副作用前的 Interrupt")
+
+    payload = {
+        "kind" : "side_effect_confirmation",
+        "action" : state["pending_action"],
+        # "question" : state["question"],
+        "question" : "是否批准这项模拟副作用？",
+    }
+    human_decision = interrupt(payload) 
+    # 中断(1) interrupt: 
+    # payload被记录为"等待人工处理的中断信息"; 抛出LangGraph内部的暂停信号;
+    # LangGraph 捕获内部暂停信号; Checkpointer 保存当前 thread_id 的State和暂停位置; 
+    # 本次 graph.invoke() 暂停; 向调用方返回包含 __interrupt__ 信息的结果, 形如:
+    # {
+    #     "__interrupt__": (
+    #         Interrupt(
+    #             value={                   # 访问方式: paused["__interrupt__"][0].value
+    #                 "kind": "...",
+    #                 "action": "...",
+    #                 "question": "...",
+    #             },
+    #             id="...",
+    #         ),
+    #     )
+    # }
+    # Checkpoint中的状态大致形如:
+    # {
+    #     "pending_action": "send mock report",
+    #     "approved": None,
+    #     "route": "confirm",
+    #     ...
+    # }
+    # 在测试中, 下面的代码会模拟人类的批准, 并调用resume_graph继续执行图.
+    # result = resume_graph(
+    #     graph,
+    #     thread_id="approve",
+    #     approved=True,
+    # )   
+
+
+    # 中断(3): 再次执行confirm节点的request_confirmation
+    # LangGraph接到Command(resume=True)的指令; 加载 thread_id 对应的 Checkpoint;
+    # 重新执行 confirm 节点; 重新执行 request_confirmation();
+    # 重新构造 payload; 再次执行 interrupt(payload);
+    # 这一次, LangGraph 发现：当前节点的第 0 个 interrupt, 已经有一个恢复值 True.
+    # 于是interrupt(payload) 的语义变成：human_decision = True, 不会再次暂停.
+    # 接着执行下面的分支: if human_decison is True:
+
+    # 附注: 同一个节点中的多个 interrupt() 会按照出现顺序编号，
+    # 例如第一个是 0、第二个是 1。恢复值会按这个编号匹配。
+    # 因此恢复执行时，interrupt() 的调用顺序必须稳定，不能第一次调用了两个，第二次因为条件变化只调用一个。
+    if human_decision is True:
+        return {"approved": True}
+    elif human_decision is False:
+        return {"approved": False}
+    else:
+        raise ValueError(f"必须传入True或者False, 不能是{type(human_decision)}")
 
 
 def confirmation_route(state: AgentState) -> str:
@@ -112,8 +192,13 @@ def confirmation_route(state: AgentState) -> str:
 
     # TODO 6f：approved 是真正的 True 时返回 approved，真正的 False 时返回 rejected；
     # None、0、1、字符串及其他非 bool 值必须明确抛出异常，不能伪装成用户拒绝。
-    raise NotImplementedError("TODO 6f：实现人工决定的条件边判断")
-
+    
+    if state["approved"] is True:
+        return "approved"
+    elif state["approved"] is False:
+        return "rejected"
+    else:
+        raise ValueError(f"approve必须是True或者False, 不能是{type(state['approved'])}")
 
 def _search(adapter: AzusaAdapter, state: AgentState) -> dict[str, Any]:
     """调用 Azusa，并把响应或适配器失败写回工作流 State。"""
@@ -204,12 +289,13 @@ def build_agent_graph(
     # search -(assess_search)→ answer | rewrite | failure | max_steps
     # rewrite → search
     # confirm -(confirmation_route)→ approved | rejected
+
     # approved/rejected/answer/failure/max_steps → END
     # 条件边必须显式给出“条件返回值 → 节点名”的映射；不得把循环、Interrupt
     # 或终止判断藏进 run_graph 外层循环。
     graph = StateGraph(AgentState)
-    graph.add_node("router", route_request)
-    graph.add_node("search", lambda state: _search(adapter, state))
+    graph.add_node("router", route_request) # 当LangGraph执行到这个节点的时候,调用route_request(current_state). route_request只返回自己负责的字段, 不会返回整份state.
+    graph.add_node("search", lambda state: _search(adapter, state)) # 见:def _search(adapter: AzusaAdapter, state: AgentState) -> dict[str, Any]:
     graph.add_node("rewrite", rewrite_query)
     graph.add_node("confirm", request_confirmation)
     graph.add_node("approved", approved)
@@ -217,9 +303,59 @@ def build_agent_graph(
     graph.add_node("answer", answer)
     graph.add_node("failure", failure)
     graph.add_node("max_steps", max_steps)
-    graph.add_node("todo_6a", unfinished_graph)
-    graph.add_edge(START, "todo_6a")
-    graph.add_edge("todo_6a", END)
+    # graph.add_node("todo_6a", unfinished_graph)
+    # graph.add_edge(START, "todo_6a")
+    # graph.add_edge("todo_6a", END)
+    graph.add_edge(START, "router")
+
+    # lambda: Python中的关键字. 意思是"我现在要当场捏一个没有名字的一次性函数"。lambda中, ":"左边是参数名, ":"右边是函数体(返回值)
+    # 解释lambda语句. path = lambda state: state["route"] 这句话的含义是:创建一个函数.以后谁调用这个函数, 就把传进来的第一个参数, 临时命名为state.
+    #                在本句中, 调用函数的时候传进来的第一个参数是一个字典, 有键值对形如{"route": "search"}. 那么state["route"] 的结果就是 "search".
+    #                最终结果是: path参数接受一个函数, 这个函数被调用后返回"search"
+    # 下面的lambda语句等效于:
+    # def choose_next_node(state: AgentState):
+    #     return state["route"]
+    # ...
+    # path = choose_next_node   # 注意这里赋值号右值是函数的名称, path参数需要一个函数. 
+    #                             LangGraph调用这个函数.按照框架约定, LangGraph一旦遇到一个可调用对象,就把当前的state传入自定义函数, 也就是调用choose_next_node(current_state)
+
+    graph.add_conditional_edges(
+        source="router",    # 从哪个节点出发
+        path = lambda state: state["route"],  # state是一个形参名称. path说明如何从state中取得路由键. state是由langgraph框架持有的.
+        path_map= {         # 根据路由键, 映射到目标节点.
+            "search": "search",
+            "confirm": "confirm",
+        },
+    )
+
+    # 解释lambda语句. path= lambda state : assess_search(state) 这句话的含义是:创建一个函数.以后谁调用这个函数, 就把传进来的第一个参数, 临时命名为state.
+    # 下面的lambda语句等效于:
+    # def foo(state: AgentState):
+    #     return assess_search(state)
+    # ...
+    # path = foo
+    graph.add_conditional_edges(
+        source="search",
+        path= lambda state : assess_search(state), # assess_search返回一个字符串, 是路由键.
+        path_map={
+            "answer":"answer",
+            "rewrite":"rewrite",
+            "failure":"failure",
+            "max_steps":"max_steps",
+        }
+    )
+    graph.add_edge("rewrite", "search") # 这条边只负责rewrite 做完以后回到 search. 真正阻止第二次改写的是下一次 Search 后，assess_search() 对显式 State 中 retry_count 的判断。
+    graph.add_conditional_edges(
+        source="confirm",
+        path= lambda state : confirmation_route(state), 
+        path_map={
+            "approved":"approved",
+            "rejected":"rejected",
+        }
+    )
+    for node in ("approved", "rejected", "answer", "failure", "max_steps"):
+        graph.add_edge(node, END)
+    # 创建或采用 MemorySaver
     active_checkpointer = checkpointer if checkpointer is not None else MemorySaver()
     return graph.compile(checkpointer=active_checkpointer)
 
@@ -227,14 +363,64 @@ def build_agent_graph(
 def run_graph(graph, question: str, *, thread_id: str, max_steps: int = 3) -> dict:
     """以未使用的线程开始工作流；``max_steps`` 必须是正整数检索上限。"""
 
-    config = {"configurable": {"thread_id": thread_id}}
-    if graph.get_state(config).values:
+    config = {"configurable": {"thread_id": thread_id}}  # 这里的 thread_id 是 Checkpointer 的存档槽编号
+    if graph.get_state(config).values:     # LangGraph会问 MemorySaver：thread_id 这个线程, 是否已经存在 State？
+        # 拦截两类线程:
+        # 暂停中的线程       → 应该拦截，要求 resume_graph()
+        # 已经正常结束的线程 → 也会拦截，避免重复启动
         raise ValueError("thread_id 已经存在，只能通过 resume_graph 恢复暂停点")
-    return graph.invoke(_initial_state(question, max_steps=max_steps), config=config)
 
+    return graph.invoke(_initial_state(question, max_steps=max_steps), config=config) # 如果被interrupt, 那么这里返回的是暂停结果, 而不是最终回答.
+    # invoke从已经编译好的图的START节点出发, 一直工作, 直到遇见三种情况之一:
+    # 1. 图走到END, 返回最终State. 2. 图遇到interrupt(), 返回暂停状态. 3. 节点抛出未处理的异常, 向外抛出异常.
 
 def resume_graph(graph, *, thread_id: str, approved: object) -> dict:
-    """在同一 ``thread_id`` 上提交恢复值；审批节点会严格验证其类型。"""
+    """在同一 ``thread_id`` 上提交interrupt所需要的恢复值Command(resume=approved)；审批节点会严格验证其类型。"""
 
     config = {"configurable": {"thread_id": thread_id}}
     return graph.invoke(Command(resume=approved), config=config)
+    # 中断(2): 恢复(假定resume=True)
+    # 调用Command后, Checkpointer 找到该 thread_id 的暂停任务, 
+    # LangGraph 将 True 登记为这个待恢复 Interrupt 的恢复值, 但不写入state["approved"].
+    # 从 confirm 节点开头重新执行 request_confirmation(), 再次执行到 interrupt(payload)
+    # interrupt() 发现当前任务已经有第 0 个恢复值 True, 不再暂停，直接 return True, 得到human_decision = True
+    # LangGraph 内部还会给同一节点内的 interrupt() 编号。这里仅有一个，因此它是第 0 个 Interrupt；
+    # 恢复时，第 0 个恢复值就交给第 0 个 interrupt()。
+    # 当confirm节点恢复执行, 并返回{"approved": True}之后，LangGraph 才会把它合并进 State。
+
+    # 中断(4): 整个中断的流程图:
+    # 第一次 invoke(initial_state)
+    # ↓
+    # router
+    #     ↓
+    # confirm
+    #     ↓
+    # interrupt(payload)
+    #     ↓
+    # 暂停信号
+    #     ↓
+    # 保存 Checkpoint
+    #     ↓
+    # 返回 __interrupt__ 给调用方
+    #     ↓
+    # 人做决定 True / False
+    #     ↓
+    # Command(resume=决定)
+    #     ↓
+    # 第二次 invoke(Command(...))
+    #     ↓
+    # 根据 thread_id 加载 Checkpoint
+    #     ↓
+    # confirm 节点从头重跑
+    #     ↓
+    # 再次执行 interrupt(payload)
+    #     ↓
+    # 取得已登记的 resume 值
+    #     ↓
+    # interrupt() 返回 True / False
+    #     ↓
+    # 写入 approved
+    #     ↓
+    # approved 或 rejected
+    #     ↓
+    # END
