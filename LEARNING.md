@@ -491,6 +491,20 @@ LangGraph Checkpoint 误当成长期 Memory。
 
 #### TODO 7：Azusa Adapter
 
+施工主线先建立两条类型流。正常数据链是：
+`ToolCall.arguments → SearchAzusaArgs / GetChunkArgs → Registry handler → AzusaAdapter
+→ SearchResponse / ChunkResponse（Pydantic 对象）→ model_dump(mode="json") → JSON
+兼容 dict → ToolExecutor.result_model 再校验 → ToolResult.output`。失败链是：
+`httpx / response validation / local dependency → AzusaAdapterError（retryable 必须是
+真正的 bool）→ Registry 的 ToolExecutionError → ToolExecutor 的 attempts、timeout
+和有限重试 → ToolResult.error`。
+
+Adapter 返回 Pydantic 对象，handler 返回 JSON 兼容字典，只有 `ToolResult.output` 才是
+Runtime 和模型消费的成功结果。Adapter 只分类、每个方法只发一次请求，不循环重试；
+Registry 不重新实现 HTTP；ToolExecutor 才负责 attempts、timeout 和有限重试。Semantic
+Adapter 表达稳定网关，Legacy Adapter 是 vector/record 到稳定证据接口的兼容翻译层，
+Mock Adapter 只用于离线确定性教学；本课没有实现 Azusa 内部 HNSW、RAG 或网关服务。
+
 文件：
 
 - `src/kaiji/adapters/azusa.py`
@@ -517,6 +531,10 @@ GET /chunks/{chunk_id}
 | timeout / network error | `True` |
 | 非法 JSON 或响应 Schema 不匹配 | `True` |
 
+3xx 在本课按非 5xx 的 HTTP 错误处理，因此为不可重试；429 也按 v0 简化策略归入全部
+4xx，不可重试。这个分类是 Kaiji v0 的教学策略，不是通用生产规则；生产系统可能
+单独处理 408、425、429、`Retry-After`、重定向和协议漂移。
+
 Adapter 只负责分类并抛出 `AzusaAdapterError`，自身不循环重试；`ToolExecutor` 在
 `max_retries=1` 的工具定义下决定是否再执行一次。完成：
 
@@ -537,9 +555,12 @@ Adapter 只负责分类并抛出 `AzusaAdapterError`，自身不循环重试；`
 Legacy Adapter 只接受 `hnsw`，向 `/search` 发送 `vector`、`k` 和固定
 `ef_search=16`，再逐条读取 `/record/{id}`。它必须保留 `score/source/page`，从
 metadata 恢复 `chunk_id`，再用注入的 resolver 恢复正文。encoder 必须返回非空
-`list[float]`，其中元素是有限数值且不能是布尔值；resolver 必须返回非空、非纯空白
+有限数值列表（允许 int/float，内部统一转成 float），其中元素必须有限且不能是布尔值；resolver 必须返回非空、非纯空白
 字符串。metadata 中的 `chunk_id` 同样必须是非空、非纯空白字符串，不能把任意对象用
-`str()` 强行伪装成标识。命中的完整 metadata 原样保留，并追加旧服务的 `record_id`。
+`str()` 强行伪装成标识。`record_id` 是兼容层保留字段，远端 metadata 已有该键时明确
+失败；否则在副本上追加旧服务的 `record_id`，不修改远端字典。search hit ID 和 record
+ID 必须类型和值都一致（例如 `7` 与 `"7"` 不匹配）。多命中采用全有或全无，任一 record
+或 resolver 失败都不返回部分 SearchResponse。
 本地依赖错误不可通过重复 HTTP 调用恢复；并发、缓存和连接池调优不在本课范围内。
 
 两个 Registry 工具都必须原样传播参数：显式 `query/k/mode`、默认 `k=3/mode=hybrid`
@@ -550,10 +571,32 @@ metadata 恢复 `chunk_id`，再用注入的 resolver 恢复正文。encoder 必
 7d Registry 工具接线**。7a 与 7b 共用错误分类但各自需要测试；7d 位于最后，因为它要
 把已经稳定的 Adapter 方法接入 Executor，而不是在 handler 内重新实现网络逻辑。
 
+每一步的窄验收命令如下；只完成当前步骤时，不应被后续步骤的未实现方法掩盖：
+
 ```powershell
-python -m pytest tests/test_azusa_adapter.py -k semantic_http
-python -m pytest tests/test_azusa_adapter.py -k legacy
-python -m pytest tests/test_azusa_adapter.py -k registry
+python -m pytest tests/test_azusa_adapter.py -k todo_7a
+python -m pytest tests/test_azusa_adapter.py -k todo_7b
+python -m pytest tests/test_azusa_adapter.py -k todo_7c_resolver
+python -m pytest tests/test_azusa_adapter.py -k todo_7c_encoder
+python -m pytest tests/test_azusa_adapter.py -k todo_7c_search
+python -m pytest tests/test_azusa_adapter.py -k todo_7c_get_chunk
+python -m pytest tests/test_azusa_adapter.py -k todo_7d
+```
+
+7a 只验语义搜索，7b 只验语义取证；7c 依次验 resolver、encoder、Legacy search/record
+转换和 Legacy `get_chunk_by_id()`；7d 才验参数 Schema、Registry、错误传播、timeout
+和 Executor 重试。7a–7c 期间后续 Registry 不应成为反馈前置条件，全部完成后再运行
+`python -m pytest tests/test_azusa_adapter.py`。
+
+Registry 的两个工具默认 `timeout_seconds=4.0`，而 HTTP Adapter 默认网络 timeout 是
+3.0 秒。Adapter 负责单次网络超时，Executor timeout 是外层最后保护；调用方若增大
+Adapter timeout，也必须传入更大的 `tool_timeout_seconds`。外层超时无法取消已开始的
+线程，因此只读操作也可能在后台完成，本课不把它伪装成可取消。
+
+```powershell
+python -m pytest tests/test_azusa_adapter.py -k todo_7a
+python -m pytest tests/test_azusa_adapter.py -k todo_7b
+python -m pytest tests/test_azusa_adapter.py -k todo_7d
 ```
 
 ```powershell
