@@ -15,10 +15,14 @@ from kaiji.models import StopReason
 class AgentState(TypedDict, total=False):
     """描述 LangGraph 节点间共享的状态及各字段的唯一职责。
     TypedDict 表示AgentState的运行时是一个dict.
-    ``total=False`` 表示: State    的某个或者某些字段, 在某个或者某些节点之前尚未出现.
-    节点返回字段的时候, 只返回自己负责更新的字段.LangGraph 会把这份局部更新合并进当前 State，
-    而不是用节点返回的字典替换整份状态。因此节点不得顺手返回或清空不属于自己职责的字段。
-    运行中的 State 也不可以随意缺少基础字段.  
+    ``total=False`` 表示: TypedDict 字段在静态类型层面都可以缺省；
+    不表示运行中的 State 可以随意缺少字段，也不自动决定节点如何更新 State。
+    注意:
+    在本课的 StateGraph 节点契约中，节点返回的是局部更新字典，而不是整份
+    State。LangGraph 会把返回的字段写回当前 State，未返回的字段保留原值。
+    因此每个节点只应返回自己负责更新的字段，不应顺手覆盖或清空其他职责的字段；
+    如果确实要清空某个字段，也必须是该节点契约明确要求的行为。
+    
     ``_initial_state`` 会在首次进入图时建立完整状态，后续节点依赖这项不变量。  
     ``question`` 保存不可变的原始用户问题，  
     ``rewritten_query`` 保存当前真正送往 Azusa 的查询。  
