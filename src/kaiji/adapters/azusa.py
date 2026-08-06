@@ -208,6 +208,17 @@ class LegacyAzusaVectorHttpAdapter:
 
         raise NotImplementedError("TODO 7c：校验并包装正文 resolver")
 
+    def _encode_query(self, query: str) -> list[float]:
+        """TODO 7c：直接调用并校验注入的 encoder，不触发后续转换。
+
+        必须原样调用 encoder，返回非空 ``list[float]``；只接受 int/float 元素，
+        bool、NaN、Inf、错误类型和 encoder 异常都必须包装为
+        ``retryable=False`` 的 ``AzusaAdapterError``。该方法不得触发 HTTP、resolver
+        或 record 转换。
+        """
+
+        raise NotImplementedError("TODO 7c：校验 query encoder 输出")
+
     def search_azusa(self, query: str, k: int, mode: str) -> SearchResponse:
         """通过旧版 Rust 向量接口搜索，并恢复 Kaiji 的语义证据模型。
 
@@ -284,8 +295,3 @@ class MockAzusaAdapter:
             raise AzusaAdapterError(
                 f"unknown chunk_id: {chunk_id}", retryable=False
             ) from exc
-
-    def _encode_query(self, query: str) -> list[float]:
-        """TODO 7c：直接调用并校验本地 encoder，不触发 HTTP 或后续转换。"""
-
-        raise NotImplementedError("TODO 7c：校验 query encoder 输出")
