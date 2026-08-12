@@ -16,7 +16,6 @@ from kaiji.formal_runner import (
     run_formal_preflight,
     _fingerprint,
 )
-from kaiji.harnesses import HarnessVariant
 from kaiji.models import (
     ModelAction,
     ModelCallMetadata,
@@ -44,8 +43,15 @@ def _cases() -> list[AgentEvalCase]:
     return load_agent_cases(root / "eval" / "real_behavior_cases.jsonl")[:2]
 
 
+class _CompletedHarness:
+    """隔离 15d 与 15a，使 Formal 窄测试只反馈恢复循环。"""
+
+    retry_enabled = True
+    duplicate_guard = True
+
+
 def _runner() -> object:
-    return build_scripted_runner(HarnessVariant.FULL_KAIJI)
+    return build_scripted_runner(_CompletedHarness())
 
 
 class InterruptAfterOne:
@@ -110,7 +116,7 @@ def test_real_behavior_and_paraphrase_have_one_to_one_contracts() -> None:
     )
 
 
-def test_partial_run_persists_each_episode_without_aggregate(tmp_path) -> None:
+def test_todo_15d_partial_run_persists_each_episode_without_aggregate(tmp_path) -> None:
     formal = ResumableFormalRunner(_config(), _cases(), _runner(), tmp_path / "formal")
 
     report = formal.run(max_new_episodes=1)

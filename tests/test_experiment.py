@@ -43,11 +43,18 @@ def _cases():
     ]
 
 
-def test_experiment_writes_complete_reproducible_artifacts(tmp_path) -> None:
+class _CompletedHarness:
+    """为 15b 提供已经完成的 15a 前置开关，不泄露其实现公式。"""
+
+    retry_enabled = True
+    duplicate_guard = True
+
+
+def test_todo_15b_experiment_writes_complete_reproducible_artifacts(tmp_path) -> None:
     config = ExperimentConfig(suite="smoke", repeats=2)
-    report = ExperimentRunner(
-        config, build_scripted_runner(HarnessVariant.FULL_KAIJI)
-    ).run(_cases(), tmp_path)
+    report = ExperimentRunner(config, build_scripted_runner(_CompletedHarness())).run(
+        _cases(), tmp_path
+    )
     target = tmp_path / report.experiment_id
 
     assert report.complete is True
@@ -70,7 +77,7 @@ def test_loader_rejects_duplicate_case_ids(tmp_path) -> None:
         load_agent_cases(path)
 
 
-def test_ablation_uses_same_dataset_and_exposes_retry_effect(tmp_path) -> None:
+def test_todo_15c_ablation_uses_same_dataset_and_exposes_retry_effect(tmp_path) -> None:
     transient = AgentEvalCase(
         case_id="transient",
         semantic_group="retry",

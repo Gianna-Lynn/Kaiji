@@ -8,7 +8,7 @@ from kaiji.langgraph_workflow import build_agent_graph, resume_graph, run_graph
 from kaiji.models import StopReason
 
 
-def test_sqlite_resumes_interrupt_across_fresh_graph_and_connection(tmp_path) -> None:
+def test_todo_14d_sqlite_resumes_across_fresh_connection(tmp_path) -> None:
     database = tmp_path / "checkpoint.sqlite"
     thread_id = "approval-thread"
     with sqlite_checkpointer(database) as first_saver:

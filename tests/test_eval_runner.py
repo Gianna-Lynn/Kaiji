@@ -22,7 +22,7 @@ def _case(case_id: str) -> AgentEvalCase:
     )
 
 
-def test_runner_executes_runtime_and_preserves_raw_result() -> None:
+def test_todo_14a_runner_executes_runtime_and_preserves_raw_result() -> None:
     """Episode 必须保存 Runtime 的消息、Trace 和模型调用元数据。"""
 
     def provider_factory(case):

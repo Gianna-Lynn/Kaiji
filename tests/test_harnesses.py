@@ -55,7 +55,7 @@ def _runner(variant: HarnessVariant, actions, steps):
         (HarnessVariant.FULL_KAIJI, StopReason.COMPLETED),
     ],
 )
-def test_retry_ablation(variant, expected) -> None:
+def test_todo_15a_retry_ablation(variant, expected) -> None:
     actions = [
         ModelAction(
             kind="tool_call",

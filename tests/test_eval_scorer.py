@@ -1,9 +1,10 @@
 """验证 Scorer 固定分母、证据引用和失败分类。"""
 
 from kaiji.demo import ScriptedDecisionProvider
-from kaiji.eval_runner import AgentEvalCase, AgentEvalRunner
+from kaiji.eval_runner import AgentEpisode, AgentEvalCase
 from kaiji.eval_scorer import aggregate_scores, score_episode
 from kaiji.models import ModelAction, StopReason, ToolCall
+from kaiji.runtime import AgentRuntime
 from kaiji.tools import ToolDefinition, ToolExecutor, ToolRegistry
 from pydantic import BaseModel
 
@@ -58,13 +59,21 @@ def _episode(answer: str, *, arguments: dict | None = None):
         ),
         ModelAction(kind="final_answer", final_answer=answer),
     ]
-    return AgentEvalRunner(
-        lambda case: ScriptedDecisionProvider(actions.copy()),
-        lambda case: ToolExecutor(_registry()),
-    ).run(_case())
+    result = AgentRuntime(
+        ScriptedDecisionProvider(actions.copy()),
+        ToolExecutor(_registry()),
+    ).run(_case().prompt)
+    return AgentEpisode(
+        run_id="score-run",
+        case_id=_case().case_id,
+        suite=_case().suite,
+        repeat_index=0,
+        latency_ms=1.0,
+        result=result,
+    )
 
 
-def test_scorer_derives_success_from_result_not_runner_claim() -> None:
+def test_todo_14b_scorer_derives_success_from_result_not_runner_claim() -> None:
     episode = _episode("Kaiji 使用工具。\nCitations: kaiji-001")
 
     score = score_episode(_case(), episode)
@@ -87,7 +96,7 @@ def test_failed_or_unallowed_citation_cannot_be_success_evidence() -> None:
     assert "citation" in score.failure_categories
 
 
-def test_aggregate_requires_every_case_and_unique_run_ids() -> None:
+def test_todo_14c_aggregate_requires_every_case_and_unique_run_ids() -> None:
     case = _case()
     episode = _episode("Kaiji 使用工具。\nCitations: kaiji-001")
     report = aggregate_scores([case], [episode])
@@ -146,12 +155,20 @@ def test_aggregate_uses_only_applicable_metric_denominators() -> None:
         expected_stop_reason=StopReason.COMPLETED,
         expects_no_tool=True,
     )
-    no_tool_episode = AgentEvalRunner(
-        lambda case: ScriptedDecisionProvider(
+    no_tool_result = AgentRuntime(
+        ScriptedDecisionProvider(
             [ModelAction(kind="final_answer", final_answer="收到")]
         ),
-        lambda case: ToolExecutor(_registry()),
-    ).run(no_tool_case)
+        ToolExecutor(_registry()),
+    ).run(no_tool_case.prompt)
+    no_tool_episode = AgentEpisode(
+        run_id="no-tool-run",
+        case_id=no_tool_case.case_id,
+        suite=no_tool_case.suite,
+        repeat_index=0,
+        latency_ms=1.0,
+        result=no_tool_result,
+    )
 
     report = aggregate_scores(
         [citation_case, retry_case, no_tool_case],
