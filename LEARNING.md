@@ -628,7 +628,10 @@ Checkpoint 是一次执行的完整恢复快照。JSON 第一层按 `thread_id` 
 入口的熟悉程度先写 `save()`，否则会被尚未建立的存储边界阻塞。
 
 ```powershell
-python -m pytest tests/test_persistence.py -k checkpoint_read_boundary
+python -m pytest tests/test_persistence.py -k todo_8a
+python -m pytest tests/test_persistence.py -k todo_8b
+python -m pytest tests/test_persistence.py -k todo_8c
+python -m pytest tests/test_persistence.py -k todo_8d
 python -m pytest tests/test_persistence.py -k checkpoint
 ```
 
@@ -656,7 +659,10 @@ Checkpoint 共用同目录临时文件再 `replace` 的原子写入边界，替�
 三种互相矛盾的解析规则。
 
 ```powershell
-python -m pytest tests/test_persistence.py -k memory_read_boundary
+python -m pytest tests/test_persistence.py -k todo_9a
+python -m pytest tests/test_persistence.py -k todo_9b
+python -m pytest tests/test_persistence.py -k todo_9c
+python -m pytest tests/test_persistence.py -k todo_9d
 python -m pytest tests/test_persistence.py -k memory
 ```
 
@@ -698,6 +704,11 @@ Trace Store 负责结构一致性、存储与回放，不负责判断最终答�
 iter_records；源码中的方法排列也遵循这一依赖顺序。
 
 ```powershell
+python -m pytest tests/test_tracing.py -k todo_10a
+python -m pytest tests/test_tracing.py -k todo_10b
+python -m pytest tests/test_tracing.py -k todo_10c
+python -m pytest tests/test_tracing.py -k todo_10d
+python -m pytest tests/test_tracing.py -k todo_10e
 python -m pytest tests/test_tracing.py
 ```
 
@@ -769,11 +780,18 @@ Checkpoint 和 Memory 场景接入同一个真实黑盒 runner 属于后续 L3 �
 fixture 改名就宣称完成。
 
 练习按依赖顺序实现：**11a Observation 跨字段不变量 → 11b 唯一 ID 索引 →
-11c JSONL 用例加载 → 11d case/observation 严格对齐 → 11e 指标聚合**。11a 的合法样例
+11c JSONL 用例加载 → 11d `_align_observations()` 严格对齐 →
+11e `_aggregate_aligned()` 指标公式**。公开的 `aggregate()` 只负责按顺序组合 11b、11d
+与 11e；这样每个子题都有不依赖后续实现的窄反馈。11a 的合法样例
 必须继续可构造，所以它不能用无条件 `NotImplementedError` 占位；相应红灯会表现为
 “非法计数组合没有被拒绝”。11b/11c 的重复 ID 红灯同理，是精确契约失败而非测试松散。
 
 ```powershell
+python -m pytest tests/test_evaluation.py -k todo_11a
+python -m pytest tests/test_evaluation.py -k todo_11b
+python -m pytest tests/test_evaluation.py -k todo_11c
+python -m pytest tests/test_evaluation.py -k todo_11d
+python -m pytest tests/test_evaluation.py -k todo_11e
 python -m pytest tests/test_evaluation.py
 python -m kaiji.eval_demo
 ```
@@ -883,6 +901,9 @@ python -m pytest -q -rs tests/test_azusa_live_integration.py
 - Azusa 网关作业（切到 `todo/kaiji-semantic-gateway` 或 `solution/kaiji-semantic-gateway`
   后可见）：`F:\Repositories\Azusa\rag\docs\kaiji_gateway_assignment.md`
 - Azusa 主线对接说明：`F:\Repositories\Azusa\docs\kaiji_integration.md`
+- TODO13—15 Reliability Eval L1/L2/L3：`docs/reliability-course-l1-l3.md`
+- Reliability Eval 固定契约：`docs/reliability-eval-contract.md`
+- 强制要求到直接测试追踪：`docs/reliability-eval-traceability.md`
 
 学习时以本文件为主线；需要复制命令时看 curriculum，需要理解边界时看 architecture，
 需要比较框架时看 framework-comparison。

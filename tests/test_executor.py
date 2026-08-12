@@ -2,6 +2,7 @@
 
 import time
 
+import pytest
 from pydantic import BaseModel
 
 from kaiji.demo import DiscountArgs, DiscountResult
@@ -12,6 +13,13 @@ from kaiji.tools import (
     ToolExecutor,
     ToolRegistry,
 )
+
+
+def test_executor_rejects_truthy_retry_flag() -> None:
+    """是否重试属于安全决定，只接受真正的 bool。"""
+
+    with pytest.raises(TypeError, match="retry_enabled"):
+        ToolExecutor(ToolRegistry(), retry_enabled=1)
 
 
 def executor_for(definition: ToolDefinition) -> ToolExecutor:
@@ -64,6 +72,118 @@ def test_arguments_are_validated_before_handler_runs() -> None:
     assert result.attempts == 0
 
 
+def test_executor_rejects_undeclared_arguments_before_handler_runs() -> None:
+    called = False
+
+    def handler(args: BaseModel) -> dict:
+        nonlocal called
+        called = True
+        return {"final_price": 1}
+
+    result = executor_for(
+        ToolDefinition(
+            name="discount",
+            description="测试工具",
+            arguments_model=DiscountArgs,
+            result_model=DiscountResult,
+            handler=handler,
+        )
+    ).execute(
+        ToolCall(
+            call_id="extra-argument",
+            name="discount",
+            arguments={"price": 100, "percent": 10, "admin": True},
+        )
+    )
+
+    assert not called
+    assert result.attempts == 0
+    assert result.error is not None
+    assert result.error.code == ToolErrorCode.INVALID_ARGUMENTS
+
+
+def test_executor_rejects_undeclared_result_fields() -> None:
+    result = executor_for(
+        ToolDefinition(
+            name="discount",
+            description="测试工具",
+            arguments_model=DiscountArgs,
+            result_model=DiscountResult,
+            handler=lambda args: {"final_price": 90, "untrusted": "extra"},
+        )
+    ).execute(
+        ToolCall(
+            call_id="extra-result",
+            name="discount",
+            arguments={"price": 100, "percent": 10},
+        )
+    )
+
+    assert not result.ok
+    assert result.error is not None
+    assert result.error.code == ToolErrorCode.INVALID_RESULT
+    assert result.output is None
+
+
+def test_executor_rejects_non_finite_argument_before_handler() -> None:
+    called = False
+
+    class LooseArgs(BaseModel):
+        value: float
+
+    def handler(args: LooseArgs) -> dict:
+        nonlocal called
+        called = True
+        return {"final_price": 1}
+
+    result = executor_for(
+        ToolDefinition(
+            name="finite-input",
+            description="有限输入",
+            arguments_model=LooseArgs,
+            result_model=DiscountResult,
+            handler=handler,
+        )
+    ).execute(
+        ToolCall.model_construct(
+            call_id="nan-argument",
+            name="finite-input",
+            arguments={"value": float("nan")},
+        )
+    )
+
+    assert not called
+    assert result.attempts == 0
+    assert result.error is not None
+    assert result.error.code == ToolErrorCode.INVALID_ARGUMENTS
+
+
+def test_executor_rejects_non_finite_result_as_invalid_result() -> None:
+    class LooseResult(BaseModel):
+        value: float
+
+    result = executor_for(
+        ToolDefinition(
+            name="finite-output",
+            description="有限输出",
+            arguments_model=DiscountArgs,
+            result_model=LooseResult,
+            handler=lambda args: {"value": float("nan")},
+        )
+    ).execute(
+        ToolCall(
+            call_id="nan-result",
+            name="finite-output",
+            arguments={"price": 100, "percent": 10},
+        )
+    )
+
+    assert not result.ok
+    assert result.attempts == 1
+    assert result.error is not None
+    assert result.error.code == ToolErrorCode.INVALID_RESULT
+
+
 def test_retryable_failure_recovers_after_one_retry() -> None:
     attempts = 0
 
@@ -96,6 +216,14 @@ def test_retryable_failure_recovers_after_one_retry() -> None:
     assert result.ok
     assert result.attempts == 2
     assert result.output == {"final_price": "10"}
+
+
+@pytest.mark.parametrize("bad", [1, 0, "false", None])
+def test_tool_execution_error_requires_strict_retryable_bool(bad) -> None:
+    """非空字符串 `false` 不得因 truthy 语义触发重试。"""
+
+    with pytest.raises(TypeError, match="真正的 bool"):
+        ToolExecutionError("bad retry flag", retryable=bad)
 
 
 def test_non_retryable_failure_stops_immediately() -> None:

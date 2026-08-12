@@ -64,6 +64,15 @@ Kaiji 的核心对象是 Message、Tool、AgentState、Workflow、Checkpoint、T
 
 - TODO6 已完成上一轮结构修复和分支同步；本轮独立静态复审发现的严格审批路由、窄测试覆盖、Checkpoint 自定义枚举序列化、`max_steps` 运行时类型校验和暂停线程复用测试缺口均已修复。TODO8—TODO12 仍未按新版独立审计方法重新审计，继续保留下面的未审计声明。
 - TODO7 已完成本轮独立审计和分支同步；TODO8—TODO12 仍未按新版独立审计方法重新审计，不得据此宣称其完整。
+- TODO8—TODO12 的答案设计已经在隔离答案分支冻结；练习分支仍保持未完成状态。TODO11d/11e 已拆成 `_align_observations()` 与 `_aggregate_aligned()` 两个独立骨架，必须分别验收。
+- TODO13—TODO15 已按 L1 Provider、L2 Runner/Scorer/SQLite、L3 Reliability Experiment 挖出课程脚手架。答案分支对应窄测试必须全绿；练习分支 13a—15d 必须分别精确红灯。真实模型与 Azusa Live 不属于默认练习回归。
+
+## Reliability 课程分级
+
+- L1 提供函数签名、Pydantic 模型、MockTransport、完整输入输出契约和细粒度直接测试，学习者实现 Provider 协议边界。
+- L2 提供模块职责、公开模型、黑盒样例、边界测试和追踪表，学习者组织 Runner、Scorer 与 SQLite 生命周期。
+- L3 只提供自然语言需求、非目标、受控数据、黑盒验收命令、报告字段和结论边界，学习者完成 Harness、实验、恢复和分析。
+- 不要求同一功能在三个等级机械重写；每个子 TODO 都必须在答案绿灯、练习精确红灯、前后置反馈不互相遮挡后才能交付。
 
 ## 文档与注释规范
 

@@ -70,6 +70,11 @@ Kaiji 在完成当前课程后，新增能力采用逐步撤除脚手架的三�
 或可观测性模块适合作为 L2；同时要求 Trace、Eval、Demo 与文档闭环的完整新能力适合作为
 L3。该模式用于未来拓展，不回头重构当前正在执行的 TODO 课程，也不得因此影响主线排期。
 
+Reliability Eval v0.2 已把这套分级落成 TODO13—TODO15：L1 Provider、L2
+Runner/Scorer/SQLite、L3 Harness 与可恢复实验。公开契约、非目标和逐子题窄命令见
+[`docs/reliability-course-l1-l3.md`](docs/reliability-course-l1-l3.md)。默认练习回归全部
+离线运行，不会读取 DeepSeek Key 或发送模型请求。
+
 ## 非目标
 
 在本阶段不做多 Agent、复杂长期记忆、任意代码执行、浏览器自动化、MCP 大型生态、Kubernetes、分布式 Runtime 或 vLLM 内核工作。

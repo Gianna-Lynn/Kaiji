@@ -35,7 +35,7 @@ class AlwaysEmptyAdapter(MockAzusaAdapter):
 
 
 class RecordingAdapter(MockAzusaAdapter):
-    """记录工作流每次真正发送给 Azusa 的搜索参数, 并调用search_azusa"""
+    """记录工作流每次真正发送给 Azusa 的搜索参数。"""
 
     def __init__(self) -> None:
         super().__init__()
@@ -44,35 +44,6 @@ class RecordingAdapter(MockAzusaAdapter):
     def search_azusa(self, query: str, k: int, mode: str) -> SearchResponse:
         self.calls.append((query, k, mode))
         return super().search_azusa(query, k, mode)
-
-
-class EmptyThenSuccessAdapter:
-    """专用于测试 ``test_graph_rewrites_empty_query_and_recovers_once``。
-
-    第一次搜索返回空证据，第二次搜索返回一条确定性证据；第三次调用
-    直接失败，以便测试同时约束“只改写一次”和“只执行两次检索”。
-    """
-
-    def __init__(self) -> None:
-        self.calls: list[tuple[str, int, str]] = []
-
-    def search_azusa(self, query: str, k: int, mode: str) -> SearchResponse:
-        """记录查询，并按调用次数模拟空证据到恢复成功的过程。"""
-
-        self.calls.append((query, k, mode))
-        if len(self.calls) == 1:
-            return SearchResponse(hits=[], mode=mode)
-        if len(self.calls) == 2:
-            return SearchResponse(
-                hits=[
-                    SearchHit(
-                        chunk_id="recovered",
-                        text="改写后恢复得到的测试证据",
-                    )
-                ],
-                mode=mode,
-            )
-        raise AssertionError("改写恢复后不应再次调用 Adapter")
 
 
 class TwoHitAdapter(MockAzusaAdapter):
@@ -199,9 +170,18 @@ def test_todo_6a_graph_has_explicit_nodes_and_edges() -> None:
     ("question", "expected"),
     [
         ("Kaiji 是什么？", {"route": "search"}),
-        ("delete mock record", {"route": "confirm", "pending_action": "delete mock record"}),
-        ("sEnD mock report", {"route": "confirm", "pending_action": "sEnD mock report"}),
-        ("Publish mock report", {"route": "confirm", "pending_action": "Publish mock report"}),
+        (
+            "delete mock record",
+            {"route": "confirm", "pending_action": "delete mock record"},
+        ),
+        (
+            "sEnD mock report",
+            {"route": "confirm", "pending_action": "sEnD mock report"},
+        ),
+        (
+            "Publish mock report",
+            {"route": "confirm", "pending_action": "Publish mock report"},
+        ),
     ],
 )
 def test_todo_6b_router_returns_only_its_local_update(
@@ -360,27 +340,21 @@ def test_checkpoint_stop_reason_uses_plain_strings_for_all_terminal_paths() -> N
     )
 
     failure_graph = build_agent_graph(AlwaysEmptyAdapter())
-    failure = run_graph(
-        failure_graph, "unfindable-token", thread_id="plain-failure"
-    )
+    failure = run_graph(failure_graph, "unfindable-token", thread_id="plain-failure")
     _assert_plain_checkpoint_stop_reason(
         failure_graph, "plain-failure", failure, StopReason.INSUFFICIENT_EVIDENCE
     )
 
     rejected_graph = build_agent_graph(MockAzusaAdapter())
     run_graph(rejected_graph, "delete mock record", thread_id="plain-rejected")
-    rejected = resume_graph(
-        rejected_graph, thread_id="plain-rejected", approved=False
-    )
+    rejected = resume_graph(rejected_graph, thread_id="plain-rejected", approved=False)
     _assert_plain_checkpoint_stop_reason(
         rejected_graph, "plain-rejected", rejected, StopReason.HUMAN_REJECTED
     )
 
     approved_graph = build_agent_graph(MockAzusaAdapter())
     run_graph(approved_graph, "send mock report", thread_id="plain-approved")
-    approved = resume_graph(
-        approved_graph, thread_id="plain-approved", approved=True
-    )
+    approved = resume_graph(approved_graph, thread_id="plain-approved", approved=True)
     _assert_plain_checkpoint_stop_reason(
         approved_graph, "plain-approved", approved, StopReason.COMPLETED
     )
@@ -403,7 +377,7 @@ def test_graph_answer_only_cites_the_evidence_used_for_its_text() -> None:
 def test_graph_rewrites_empty_query_and_recovers_once() -> None:
     """空证据应触发恰好一次改写，两个计数器必须各自计数。"""
 
-    adapter = EmptyThenSuccessAdapter()
+    adapter = RecordingAdapter()
     graph = build_agent_graph(adapter)
 
     result = run_graph(graph, "unfindable-token", thread_id="empty")
@@ -537,9 +511,7 @@ def test_graph_interrupt_payload_covers_every_side_effect_keyword(verb: str) -> 
     assert payload["action"] == action
     assert isinstance(payload["question"], str)
     assert "批准" in payload["question"]
-    snapshot = graph.get_state(
-        {"configurable": {"thread_id": f"interrupt-{verb}"}}
-    )
+    snapshot = graph.get_state({"configurable": {"thread_id": f"interrupt-{verb}"}})
     assert snapshot.values["pending_action"] == action
     assert snapshot.values["approved"] is None
     assert snapshot.values["route"] == "confirm"
@@ -585,7 +557,9 @@ def test_graph_resumes_approval_and_preserves_pending_action() -> None:
     assert result["approved"] is True
 
 
-def test_two_interrupted_threads_resume_in_reverse_order_without_state_leakage() -> None:
+def test_two_interrupted_threads_resume_in_reverse_order_without_state_leakage() -> (
+    None
+):
     """两个暂停线程逆序恢复时必须保留各自的动作和人工决定。"""
 
     graph = build_agent_graph(MockAzusaAdapter())
@@ -642,7 +616,9 @@ def test_run_graph_rejects_reusing_an_existing_thread_id() -> None:
     assert adapter.calls == [("Kaiji", 3, "hybrid")]
 
 
-def test_run_graph_rejects_reusing_a_paused_thread_without_overwriting_checkpoint() -> None:
+def test_run_graph_rejects_reusing_a_paused_thread_without_overwriting_checkpoint() -> (
+    None
+):
     """暂停线程不能被新运行覆盖，原 Interrupt 必须仍可恢复。"""
 
     adapter = RecordingAdapter()
@@ -676,9 +652,7 @@ def test_build_graph_uses_explicitly_injected_memory_saver() -> None:
 
     assert graph.checkpointer is checkpointer
     run_graph(graph, "Kaiji", thread_id="explicit-checkpointer")
-    snapshot = graph.get_state(
-        {"configurable": {"thread_id": "explicit-checkpointer"}}
-    )
+    snapshot = graph.get_state({"configurable": {"thread_id": "explicit-checkpointer"}})
     assert snapshot.values["question"] == "Kaiji"
 
 
@@ -691,9 +665,7 @@ def test_default_checkpointer_is_not_shared_between_graph_instances() -> None:
     assert first.checkpointer is not second.checkpointer
 
 
-@pytest.mark.parametrize(
-    "max_steps", [0, -1, True, 1.5, float("nan"), "3", None]
-)
+@pytest.mark.parametrize("max_steps", [0, -1, True, 1.5, float("nan"), "3", None])
 def test_graph_rejects_invalid_search_limit(max_steps: object) -> None:
     """非正整数上限不能进入图执行，也不能产生含糊的零步结果。"""
 
@@ -711,3 +683,27 @@ def test_graph_rejects_invalid_search_limit(max_steps: object) -> None:
 
     assert adapter.calls == []
     assert not graph.get_state({"configurable": {"thread_id": thread_id}}).values
+
+
+@pytest.mark.parametrize(
+    ("question", "thread_id"),
+    [
+        ("", "thread"),
+        ("   ", "thread"),
+        (None, "thread"),
+        ("Kaiji", ""),
+        ("Kaiji", "   "),
+        ("Kaiji", 7),
+    ],
+)
+def test_graph_rejects_blank_or_non_string_run_identity(question, thread_id) -> None:
+    graph = build_agent_graph(MockAzusaAdapter())
+    with pytest.raises(ValueError):
+        run_graph(graph, question, thread_id=thread_id)
+
+
+@pytest.mark.parametrize("thread_id", ["", "   ", None, 7])
+def test_resume_rejects_blank_or_non_string_thread_identity(thread_id) -> None:
+    graph = build_agent_graph(MockAzusaAdapter())
+    with pytest.raises(ValueError):
+        resume_graph(graph, thread_id=thread_id, approved=False)
