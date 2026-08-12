@@ -67,6 +67,7 @@ Kaiji 的核心对象是 Message、Tool、AgentState、Workflow、Checkpoint、T
 - TODO8—TODO12 的答案设计已经在隔离答案分支冻结；练习分支仍保持未完成状态。TODO11d/11e 已拆成 `_align_observations()` 与 `_aggregate_aligned()` 两个独立骨架，必须分别验收。
 - TODO13—TODO15 已按 L1 Provider、L2 Runner/Scorer/SQLite、L3 Reliability Experiment 挖出课程脚手架。答案分支对应窄测试必须全绿；练习分支 13a—15d 必须分别精确红灯。真实模型与 Azusa Live 不属于默认练习回归。
 - 当前反向验收结果：答案 546 collected、545 passed、1 live skipped；课程 400 passed、145 个预期 TODO 失败、1 live skipped。13a—15d 已逐项验证答案绿灯与课程精确红灯，详见 `docs/reliability-course-validation.md`。
+- main 已保留用户 TODO7 在途文件；因此当前 main 上 TODO15d 会按真实依赖先落到 TODO7d，不得误报为 15d 脚手架缺陷。TODO7 完成后再复验 15d 独立红灯。
 
 ## Reliability 课程分级
 

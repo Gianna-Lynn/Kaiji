@@ -57,3 +57,22 @@ TODO 后的再次验收，也不把 skip 当作 TODO12 通过。
 课程分支从 `main@14c0186` 创建于独立 worktree。主工作树中人的
 `src/kaiji/adapters/azusa.py` 与 `src/kaiji/azusa_tools.py` 未提交修改没有被复制、覆盖、
 暂存或删除。课程提交不应直接强推到 main；合并前必须先处理这两个文件的重叠差异。
+
+## main 安全整理记录
+
+课程三笔提交已整理进 `main`，随后按完整 blob 快照恢复人的 TODO7 在途文件。合并前原始
+快照固定保存在本地分支 `codex/backup-todo7-wip-20260812` 和带说明的 stash 中；两个
+文件的 blob hash 已逐项核对一致。
+
+原始 `azusa.py` 在 TODO7c 的在途 `try` 后尚未写 `except/finally`，会导致整个模块无法
+导入。main 工作树只增加了语义中性的 `finally: pass` 以闭合语法：它不吞异常、不完成
+TODO7，也不改变正常路径落入原 `NotImplementedError` 的行为。原始逐字版本仍由备份
+分支保存。
+
+整理后验证：
+
+- `compileall` 通过，546 tests 可以完整收集；
+- TODO1—6 的 Scaffold/Registry/Executor/Runtime 共 53 passed；
+- TODO7 当前 168 条测试中 90 passed、78 failed，保留“正在尝试中”的真实状态；
+- TODO13a—15c 分别精确落在自身 TODO；TODO15d 会先落在 TODO7d，因为完整实验合法依赖
+  Azusa Registry 支持。完成 TODO7 后，必须重新验证 15d 的独立红灯。
