@@ -4,12 +4,19 @@ from __future__ import annotations
 
 import json
 import math
-from collections import Counter
 from collections.abc import Callable
 from pathlib import Path
 from typing import TypeVar
 
-from pydantic import BaseModel, Field, model_validator
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    Field,
+    StrictBool,
+    StrictInt,
+    field_validator,
+    model_validator,
+)
 
 from kaiji.models import StopReason
 
@@ -17,14 +24,34 @@ from kaiji.models import StopReason
 class EvalCase(BaseModel):
     """定义一条固定评测用例及其期望行为。"""
 
+    model_config = ConfigDict(extra="forbid")
+
     case_id: str
     prompt: str
     category: str
     expected_stop_reason: StopReason
     expected_tool: str | None = None
-    expects_retry_recovery: bool = False
-    expects_citation: bool = False
-    max_tool_calls: int = Field(default=1, ge=0)
+    expects_retry_recovery: StrictBool = False
+    expects_citation: StrictBool = False
+    max_tool_calls: StrictInt = Field(default=1, ge=0)
+
+    @field_validator("case_id", "prompt", "category")
+    @classmethod
+    def text_boundaries_are_not_blank(cls, value: str) -> str:
+        """用例身份、提示与分类不得为空白。"""
+
+        if not value.strip():
+            raise ValueError("EvalCase 文本边界不得为空白")
+        return value
+
+    @field_validator("expected_tool")
+    @classmethod
+    def expected_tool_is_not_blank(cls, value: str | None) -> str | None:
+        """空值表示不要求工具；空白字符串不承担第三种语义。"""
+
+        if value is not None and not value.strip():
+            raise ValueError("expected_tool 不得为空白")
+        return value
 
 
 class EvalObservation(BaseModel):
@@ -53,32 +80,45 @@ class EvalObservation(BaseModel):
       证据支持回答中的相关表述时才为真；不要求引用的 case 使用 ``None``。
     """
 
+    model_config = ConfigDict(extra="forbid")
+
     case_id: str
-    task_success: bool
+    task_success: StrictBool
     selected_tool: str | None
-    arguments_correct: bool | None
-    tool_calls: int = Field(default=0, ge=0)
-    successful_tool_calls: int = Field(default=0, ge=0)
-    retry_recovered: bool | None = None
-    unnecessary_tool_calls: int = Field(default=0, ge=0)
-    steps: int = Field(ge=1)
+    arguments_correct: StrictBool | None
+    tool_calls: StrictInt = Field(default=0, ge=0)
+    successful_tool_calls: StrictInt = Field(default=0, ge=0)
+    retry_recovered: StrictBool | None = None
+    unnecessary_tool_calls: StrictInt = Field(default=0, ge=0)
+    steps: StrictInt = Field(ge=1)
     latency_ms: float = Field(ge=0, allow_inf_nan=False)
     stop_reason: StopReason
-    citation_supported: bool | None = None
+    citation_supported: StrictBool | None = None
+
+    @field_validator("case_id")
+    @classmethod
+    def case_id_is_not_blank(cls, value: str) -> str:
+        """Observation 必须具有可对齐的非空身份。"""
+
+        if not value.strip():
+            raise ValueError("case_id 不得为空白")
+        return value
+
+    @field_validator("selected_tool")
+    @classmethod
+    def selected_tool_is_not_blank(cls, value: str | None) -> str | None:
+        """没有选择用 None 表示，不能使用空白字符串。"""
+
+        if value is not None and not value.strip():
+            raise ValueError("selected_tool 不得为空白")
+        return value
 
     @model_validator(mode="after")
     def call_counts_are_consistent(self) -> EvalObservation:
         """确保成功调用和无用调用都不会超过总调用数。"""
-
-        # TODO 11a：补全跨字段计数不变量。
-        #
-        # Field 已经负责单字段下界；这里处理只有同时观察多个字段才知道的
-        # 矛盾。successful_tool_calls 和 unnecessary_tool_calls 都是
-        # tool_calls 所表示的“实际 handler 尝试”中的子集，各自都不得大于
-        # tool_calls。违反契约时抛出 ValueError，合法时返回 self。
-        #
-        # 注意：successful 与 unnecessary 不要求互斥，不能擅自增加“两者之和
-        # 不得超过总数”的契约。当前占位只返回 self，关系异常测试应当失败。
+        # TODO 11a：补全所有跨字段不变量。Field 只负责单字段下界；这里必须
+        # 直接拒绝成功/无用调用数超过总尝试、没有工具却评价参数、一次尝试却
+        # 声称重试恢复，以及没有成功证据却声称引用受支持。合法时返回 self。
         return self
 
 
@@ -108,13 +148,8 @@ def _index_by_unique_case_id(
 ) -> dict[str, EvalItem]:
     """按 ``case_id`` 建立索引，并显式报告重复标识。"""
 
-    # TODO 11b：建立不会静默吞掉重复项的 case_id 索引。
-    #
-    # EvalCase 与 EvalObservation 共用这条身份契约，所以通过 EvalItem 复用
-    # 实现。遍历 items：保存首次/当前对象的同时收集所有重复 case_id；若存在
-    # 重复，抛出包含 label 和排序后重复标识的 ValueError；否则返回索引。
-    #
-    # 当前占位的字典推导会让后值覆盖前值，正是本 TODO 要消除的假阳性来源。
+    # TODO 11b：建立唯一索引并显式报告排序后的重复 ID。不能使用会让后值
+    # 静默覆盖前值的字典推导。
     return {item.case_id: item for item in items}
 
 
@@ -126,12 +161,7 @@ def load_cases(path: Path) -> list[EvalCase]:
         for line in path.read_text(encoding="utf-8").splitlines()
         if line.strip()
     ]
-    # TODO 11c：把 JSONL 解析结果接入统一的唯一性检查。
-    #
-    # 上方代码已经完成“非空物理行 JSON 字符串 -> EvalCase”的序列化边界；
-    # 这里仍需调用 _index_by_unique_case_id(cases, "评测用例")。不要把列表直接
-    # 转成 dict 后再返回，否则重复 case_id 会在没有告警的情况下被覆盖；成功
-    # 校验后仍按文件顺序返回原 cases 列表。
+    # TODO 11c：调用统一唯一性检查；成功后仍按文件顺序返回 cases。
     return cases
 
 
@@ -147,37 +177,37 @@ def _percentile(values: list[float], percentile: float) -> float:
     return ordered[index]
 
 
-def aggregate(cases: list[EvalCase], observations: list[EvalObservation]) -> EvalReport:
-    """按固定分母聚合与用例一一对应的完整观测集。
+def _align_observations(
+    cases: list[EvalCase],
+    observations: list[EvalObservation],
+) -> list[EvalObservation]:
+    """严格检查两侧唯一覆盖，并按 case 文件顺序返回观测。"""
+
+    # TODO 11d：分别建立唯一索引，检查两侧 ID 集合完全相等，并按 cases
+    # 的原始顺序返回观测。缺失与额外 ID 必须分别进入错误信息。
+    raise NotImplementedError("TODO 11d：实现 case/observation 严格身份对齐")
+
+
+def _aggregate_aligned(
+    cases: list[EvalCase],
+    ordered_observations: list[EvalObservation],
+) -> EvalReport:
+    """在 11d 已完成身份对齐的前提下计算固定分母指标。
 
     工具选择和参数准确率只以 ``expected_tool`` 非空的用例为分母；重试与
     引用指标分别以显式要求该能力的用例为分母。适用字段为 ``None`` 时按
     失败计入既定分母，不能通过缺失观测缩小分母。
     """
 
-    # TODO 11d：严格对齐 cases 与 observations。
-    #
-    # 先分别调用 _index_by_unique_case_id，确保两侧标识各自唯一，再比较两组
-    # case_id。观测必须不多不少地覆盖每条用例；缺失或额外标识都抛 ValueError，
-    # 错误文本应分别列出排序后的缺失项和额外项。不能只比较 set 推导，因为
-    # set 会掩盖“同一 id 出现两次”的重复观测。
-    #
-    # TODO 11e：按既定口径计算完整 EvalReport。
-    #
-    # 1. 按 cases 的原顺序从 observation 索引取值；输入列表顺序不是配对依据；
-    # 2. task_success_rate 中一条用例成功，必须同时满足：观测的业务答案正确、
-    #    stop_reason 等于期望值、tool_calls 不超过 max_tool_calls；
-    # 3. selection/argument 只统计 expected_tool 非空的用例；argument 的 None
-    #    在适用用例中按 False，而不是从分母删掉；
-    # 4. retry/citation 只统计 case 明确要求相应能力的用例；适用字段为 None
-    #    同样按 False；
-    # 5. tool_success 与 unnecessary 的分母都是所有观测的 tool_calls 总和。
-    #    这里的调用数是 handler 尝试，不是 Runtime 的 steps；零调用时比率为 0；
-    # 6. average_steps 与延迟来自严格对齐后的全部观测；p50/p95 使用
-    #    _percentile；停止原因按观测实际 stop_reason 计数；空分母由 _rate
-    #    返回 0。最终 case_count 等于用例数。
-    #
-    raise NotImplementedError("TODO 11d—11e：实现严格对齐与全部指标聚合")
+    # TODO 11e：只接收 11d 已按 case 顺序对齐的观测，按书面固定分母计算
+    # 全部指标。必须拒绝长度不等；不适用和失败不得混为同一语义。
+    raise NotImplementedError("TODO 11e：实现已对齐观测的固定分母聚合")
+
+
+def aggregate(cases: list[EvalCase], observations: list[EvalObservation]) -> EvalReport:
+    """先严格对齐完整观测，再把有序输入交给固定指标公式。"""
+
+    return _aggregate_aligned(cases, _align_observations(cases, observations))
 
 
 def run_eval(

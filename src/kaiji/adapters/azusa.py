@@ -3,12 +3,21 @@
 from __future__ import annotations
 
 import math
+import json
 from collections.abc import Callable
 from typing import Any, Protocol
 from urllib.parse import quote
 
 import httpx
-from pydantic import BaseModel, Field, StrictInt, StrictStr, field_validator
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    Field,
+    StrictInt,
+    StrictStr,
+    field_validator,
+    model_validator,
+)
 
 
 def _non_blank(value: object, field_name: str) -> str:
@@ -20,6 +29,8 @@ def _non_blank(value: object, field_name: str) -> str:
 
 class SearchHit(BaseModel):
     """表示一条由 Azusa 返回并可作为证据使用的检索命中。"""
+
+    model_config = ConfigDict(extra="forbid")
 
     chunk_id: StrictStr
     text: StrictStr
@@ -35,13 +46,29 @@ class SearchHit(BaseModel):
     @field_validator("score", mode="before")
     @classmethod
     def score_is_finite_number(cls, value: object) -> object:
-        if value is not None and (isinstance(value, bool) or not isinstance(value, (int, float)) or not math.isfinite(value)):
+        if value is not None and (
+            isinstance(value, bool)
+            or not isinstance(value, (int, float))
+            or not math.isfinite(value)
+        ):
             raise ValueError("score 必须是有限数值")
         return value
+
+    @model_validator(mode="after")
+    def metadata_is_finite_json(self) -> SearchHit:
+        """证据元数据必须能无损进入 ToolResult 与 Trace。"""
+
+        try:
+            json.dumps(self.metadata, allow_nan=False)
+        except (TypeError, ValueError) as exc:
+            raise ValueError("metadata 必须是有限 JSON 值") from exc
+        return self
 
 
 class SearchResponse(BaseModel):
     """封装 Azusa 检索命中及实际使用的检索模式。"""
+
+    model_config = ConfigDict(extra="forbid")
 
     hits: list[SearchHit]
     mode: StrictStr
@@ -50,9 +77,20 @@ class SearchResponse(BaseModel):
         lambda value, info: _non_blank(value, info.field_name)
     )
 
+    @model_validator(mode="after")
+    def hit_ids_are_unique(self) -> SearchResponse:
+        """同一响应中一个 chunk_id 只能对应一条证据。"""
+
+        ids = [hit.chunk_id for hit in self.hits]
+        if len(ids) != len(set(ids)):
+            raise ValueError("SearchResponse 中 chunk_id 不得重复")
+        return self
+
 
 class ChunkResponse(BaseModel):
     """表示按稳定 chunk_id 取回的完整证据正文与元数据。"""
+
+    model_config = ConfigDict(extra="forbid")
 
     chunk_id: StrictStr
     text: StrictStr
@@ -63,6 +101,16 @@ class ChunkResponse(BaseModel):
     _valid_strings = field_validator("chunk_id", "text")(
         lambda value, info: _non_blank(value, info.field_name)
     )
+
+    @model_validator(mode="after")
+    def metadata_is_finite_json(self) -> ChunkResponse:
+        """完整证据元数据必须能安全序列化。"""
+
+        try:
+            json.dumps(self.metadata, allow_nan=False)
+        except (TypeError, ValueError) as exc:
+            raise ValueError("metadata 必须是有限 JSON 值") from exc
+        return self
 
 
 class AzusaAdapterError(Exception):
@@ -98,6 +146,8 @@ class AzusaAdapter(Protocol):
 class _LegacySearchItem(BaseModel):
     """校验旧版 ``/search`` 中一条检索结果的必要字段。"""
 
+    model_config = ConfigDict(extra="forbid")
+
     id: StrictInt | StrictStr
     score: int | float | None = None
 
@@ -111,7 +161,11 @@ class _LegacySearchItem(BaseModel):
     @field_validator("score", mode="before")
     @classmethod
     def score_is_finite_number(cls, value: object) -> object:
-        if value is not None and (isinstance(value, bool) or not isinstance(value, (int, float)) or not math.isfinite(value)):
+        if value is not None and (
+            isinstance(value, bool)
+            or not isinstance(value, (int, float))
+            or not math.isfinite(value)
+        ):
             raise ValueError("score 必须是有限数值")
         return value
 
@@ -119,13 +173,18 @@ class _LegacySearchItem(BaseModel):
 class _LegacySearchResponse(BaseModel):
     """校验旧版 ``/search`` 的响应外壳。"""
 
+    model_config = ConfigDict(extra="forbid")
+
     results: list[_LegacySearchItem]
 
 
 class _LegacyRecordResponse(BaseModel):
     """校验旧版 ``/record/{id}`` 中 Kaiji 依赖的元数据。"""
 
+    model_config = ConfigDict(extra="forbid")
+
     id: StrictInt | StrictStr
+    vector: list[int | float] | None = None
     metadata: dict[str, Any]
 
     @field_validator("id")
@@ -133,6 +192,23 @@ class _LegacyRecordResponse(BaseModel):
     def id_is_valid(cls, value: object) -> object:
         if isinstance(value, str) and not value.strip():
             raise ValueError("id 不得为空或纯空白")
+        return value
+
+    @field_validator("vector", mode="before")
+    @classmethod
+    def vector_is_finite_when_present(cls, value: object) -> object:
+        """Legacy 正式响应允许 vector，但不得接受布尔或非有限元素。"""
+
+        if value is not None and (
+            not isinstance(value, list)
+            or any(
+                isinstance(item, bool)
+                or not isinstance(item, (int, float))
+                or not math.isfinite(item)
+                for item in value
+            )
+        ):
+            raise ValueError("Legacy vector 必须是有限数值列表")
         return value
 
 
@@ -159,25 +235,74 @@ class AzusaHttpAdapter:
     def search_azusa(self, query: str, k: int, mode: str) -> SearchResponse:
         """通过语义网关搜索证据，并把边界失败映射为重试策略。
 
-        TODO 7a 的输入必须原样组成 ``query/k/mode`` JSON；成功返回值必须由
-        ``SearchResponse`` 校验。Adapter 只分类并抛出 ``AzusaAdapterError``，
-        不在这里循环重试：timeout、network、HTTP 5xx、非法 JSON 和响应 Schema
-        不匹配标记为可重试，HTTP 4xx 标记为不可重试。
+        Adapter 只负责标记失败是否可重试，真正的有限重试由
+        ``ToolExecutor`` 统一执行。超时、网络错误、5xx 和无效响应可能来自
+        网关的瞬时故障，因此标记为可重试；429 允许 Executor 有界重试一次，
+        其他 4xx 表示请求本身有误，不可重试。
         """
 
-        # TODO 7a：实现 POST /search_azusa、响应校验和上述完整错误分类。
-        raise NotImplementedError("TODO 7a：实现语义搜索 Adapter 契约")
+        try:
+            response = self._client.post(
+                "/search_azusa",
+                json={"query": query, "k": k, "mode": mode},
+            )
+            response.raise_for_status()
+            result = SearchResponse.model_validate(response.json())
+            if result.mode != mode:
+                raise ValueError("Azusa search response mode does not match request")
+            return result
+        except httpx.TimeoutException as exc:
+            raise AzusaAdapterError("Azusa search timed out", retryable=True) from exc
+        except httpx.HTTPStatusError as exc:
+            status_code = exc.response.status_code
+            retryable = status_code == 429 or status_code >= 500
+            raise AzusaAdapterError(
+                f"Azusa search returned HTTP {exc.response.status_code}",
+                retryable=retryable,
+            ) from exc
+        except httpx.RequestError as exc:
+            raise AzusaAdapterError(
+                f"Azusa search request failed: {exc}", retryable=True
+            ) from exc
+        except (ValueError, TypeError) as exc:
+            raise AzusaAdapterError(
+                f"Azusa search returned an invalid response: {exc}",
+                retryable=True,
+            ) from exc
 
     def get_chunk_by_id(self, chunk_id: str) -> ChunkResponse:
-        """按稳定 ``chunk_id`` 读取完整证据，并防止证据错配。
+        """按 chunk_id 读取完整证据，并校验响应结构。"""
 
-        TODO 7b 必须把 ``chunk_id`` 当作单个 URL 路径段编码，再校验
-        ``ChunkResponse``；响应中的 ``chunk_id`` 还必须与请求值完全一致。
-        错误分类和“不在 Adapter 内重试”的边界与 TODO 7a 相同。
-        """
-
-        # TODO 7b：实现 GET /chunks/{encoded_chunk_id}、响应校验和错误分类。
-        raise NotImplementedError("TODO 7b：实现证据读取 Adapter 契约")
+        try:
+            encoded_chunk_id = quote(chunk_id, safe="")
+            response = self._client.get(f"/chunks/{encoded_chunk_id}")
+            response.raise_for_status()
+            chunk = ChunkResponse.model_validate(response.json())
+            if chunk.chunk_id != chunk_id:
+                raise ValueError(
+                    "Azusa chunk response ID does not match the requested chunk_id"
+                )
+            return chunk
+        except httpx.TimeoutException as exc:
+            raise AzusaAdapterError(
+                "Azusa chunk lookup timed out", retryable=True
+            ) from exc
+        except httpx.HTTPStatusError as exc:
+            raise AzusaAdapterError(
+                f"Azusa chunk lookup returned HTTP {exc.response.status_code}",
+                retryable=(
+                    exc.response.status_code == 429 or exc.response.status_code >= 500
+                ),
+            ) from exc
+        except httpx.RequestError as exc:
+            raise AzusaAdapterError(
+                f"Azusa chunk lookup request failed: {exc}", retryable=True
+            ) from exc
+        except (ValueError, TypeError) as exc:
+            raise AzusaAdapterError(
+                f"Azusa chunk lookup returned an invalid response: {exc}",
+                retryable=True,
+            ) from exc
 
     def close(self) -> None:
         """关闭底层 HTTP 客户端连接池。"""
@@ -211,53 +336,117 @@ class LegacyAzusaVectorHttpAdapter:
         )
 
     def _resolve_text(self, chunk_id: str) -> str:
-        """恢复旧服务未保存的正文，并统一本地 resolver 的失败边界。
+        """调用本地正文解析器，并把异常或非法返回统一标为不可重试。"""
 
-        TODO 7c 要求 resolver 返回非空、非纯空白字符串。resolver 抛出的异常或
-        非法返回值属于本地契约错误，统一包装成不可重试的
-        ``AzusaAdapterError``；不能把它误判为远端瞬时故障。
-        """
-
-        raise NotImplementedError("TODO 7c：校验并包装正文 resolver")
+        try:
+            text = self._text_resolver(chunk_id)
+            if not isinstance(text, str) or not text.strip():
+                raise ValueError("text resolver 必须返回非空且非纯空白字符串")
+            return text
+        except Exception as exc:
+            raise AzusaAdapterError(
+                f"legacy Azusa text resolution failed for {chunk_id}: {exc}",
+                retryable=False,
+            ) from exc
 
     def _encode_query(self, query: str) -> list[float]:
-        """TODO 7c：直接调用并校验注入的 encoder，不触发后续转换。
+        """调用并校验本地向量编码器，不触发任何 HTTP 或后续转换。"""
 
-        必须原样调用 encoder，返回非空 ``list[float]``；只接受 int/float 元素，
-        bool、NaN、Inf、错误类型和 encoder 异常都必须包装为
-        ``retryable=False`` 的 ``AzusaAdapterError``。该方法不得触发 HTTP、resolver
-        或 record 转换。
-        """
-
-        raise NotImplementedError("TODO 7c：校验 query encoder 输出")
+        try:
+            raw_vector = self._encoder(query)
+            if (
+                not isinstance(raw_vector, list)
+                or not raw_vector
+                or any(
+                    isinstance(value, bool)
+                    or not isinstance(value, (int, float))
+                    or not math.isfinite(value)
+                    for value in raw_vector
+                )
+            ):
+                raise ValueError("query encoder 必须返回非空的有限数值列表")
+            return [float(value) for value in raw_vector]
+        except Exception as exc:
+            raise AzusaAdapterError(
+                f"legacy Azusa query encoding failed: {exc}", retryable=False
+            ) from exc
 
     def search_azusa(self, query: str, k: int, mode: str) -> SearchResponse:
-        """通过旧版 Rust 向量接口搜索，并恢复 Kaiji 的语义证据模型。
+        """通过当前 Rust 向量接口搜索，并恢复 Kaiji 需要的证据字段。"""
 
-        TODO 7c 的数据流是 ``query -> encoder -> POST /search -> 每条命中的
-        GET /record/{id} -> metadata.chunk_id -> resolver -> SearchHit``。
-        只接受 ``hnsw``；请求体必须包含 ``vector/k`` 和固定
-        ``ef_search=16``。encoder 必须返回非空有限数值列表，布尔值不算数值；
-        record ID 必须与命中 ID 一致；``metadata.chunk_id`` 必须是非空、非纯
-        空白字符串。命中的完整 metadata 要保留并追加原始 ``record_id``，同时
-        映射 ``score/source/page``。
+        if mode != "hnsw":
+            raise AzusaAdapterError(
+                "current Rust Azusa HTTP API only supports hnsw mode",
+                retryable=False,
+            )
+        vector = self._encode_query(query)
 
-        encoder/resolver 的异常或非法返回不可重试；远端 HTTP 两阶段沿用 TODO 7a
-        的分类。路径中的 record ID 必须编码。并发、缓存和连接池调优不在练习范围。
-
-        必须通过 ``self._encode_query(query)`` 获得向量，并通过
-        ``self._resolve_text(chunk_id)`` 获得正文；不得绕过 helper 复制 encoder 或
-        resolver 的校验逻辑。
-        """
-
-        # TODO 7c：实现上述兼容转换与本地/远端两类失败边界。
-        raise NotImplementedError("TODO 7c：实现旧版向量 Adapter 契约")
+        try:
+            response = self._client.post(
+                "/search",
+                json={"vector": vector, "k": k, "ef_search": 16},
+            )
+            response.raise_for_status()
+            hits = []
+            payload = _LegacySearchResponse.model_validate(response.json())
+            for item in payload.results:
+                record_id = str(item.id)
+                record = self._client.get(f"/record/{quote(record_id, safe='')}")
+                record.raise_for_status()
+                body = _LegacyRecordResponse.model_validate(record.json())
+                if type(body.id) is not type(item.id) or body.id != item.id:
+                    raise ValueError(
+                        "legacy Azusa record ID does not match the search result"
+                    )
+                metadata = dict(body.metadata)
+                if "record_id" in metadata:
+                    raise ValueError(
+                        "legacy metadata 保留字段 record_id 不得由远端提供"
+                    )
+                raw_chunk_id = metadata.get("chunk_id")
+                if not isinstance(raw_chunk_id, str) or not raw_chunk_id.strip():
+                    raise AzusaAdapterError(
+                        "legacy Azusa record metadata needs a non-empty string chunk_id",
+                        retryable=True,
+                    )
+                chunk_id = raw_chunk_id
+                text = self._resolve_text(chunk_id)
+                hit_metadata = {**metadata, "record_id": item.id}
+                hits.append(
+                    SearchHit(
+                        chunk_id=chunk_id,
+                        text=text,
+                        score=item.score,
+                        source=metadata.get("source"),
+                        page=metadata.get("page"),
+                        metadata=hit_metadata,
+                    )
+                )
+            return SearchResponse(hits=hits, mode=mode)
+        except httpx.TimeoutException as exc:
+            raise AzusaAdapterError("legacy Azusa timed out", retryable=True) from exc
+        except httpx.HTTPStatusError as exc:
+            raise AzusaAdapterError(
+                f"legacy Azusa returned HTTP {exc.response.status_code}",
+                retryable=exc.response.status_code >= 500,
+            ) from exc
+        except httpx.RequestError as exc:
+            raise AzusaAdapterError(
+                f"legacy Azusa request failed: {exc}", retryable=True
+            ) from exc
+        except (ValueError, TypeError) as exc:
+            raise AzusaAdapterError(
+                f"legacy Azusa returned an invalid response: {exc}", retryable=True
+            ) from exc
 
     def get_chunk_by_id(self, chunk_id: str) -> ChunkResponse:
-        """用同一套 resolver 契约按 ``chunk_id`` 构造兼容响应。"""
+        """用注入的正文解析器按 chunk_id 构造兼容响应。"""
 
-        # TODO 7c：复用 _resolve_text，不能让直接读取绕过 resolver 校验和错误包装。
-        raise NotImplementedError("TODO 7c：实现旧版证据读取契约")
+        try:
+            chunk_id = _non_blank(chunk_id, "chunk_id")
+        except ValueError as exc:
+            raise AzusaAdapterError(str(exc), retryable=False) from exc
+        return ChunkResponse(chunk_id=chunk_id, text=self._resolve_text(chunk_id))
 
     def close(self) -> None:
         """关闭底层 HTTP 客户端连接池。"""
@@ -269,23 +458,26 @@ class MockAzusaAdapter:
     """提供无需网络、GPU 或真实 Azusa 服务的确定性检索结果。"""
 
     def __init__(self, chunks: list[ChunkResponse] | None = None) -> None:
-        self._chunks = {
-            chunk.chunk_id: chunk
-            for chunk in (
-                chunks if chunks is not None else [
-                    ChunkResponse(
-                        chunk_id="kaiji-001",
-                        text="Kaiji owns tool, state, workflow, trace, and eval.",
-                        source="mock://kaiji",
-                    ),
-                    ChunkResponse(
-                        chunk_id="azusa-001",
-                        text="Azusa provides HNSW and RAG retrieval through adapters.",
-                        source="mock://azusa",
-                    ),
-                ]
-            )
-        }
+        selected = (
+            chunks
+            if chunks is not None
+            else [
+                ChunkResponse(
+                    chunk_id="kaiji-001",
+                    text="Kaiji owns tool, state, workflow, trace, and eval.",
+                    source="mock://kaiji",
+                ),
+                ChunkResponse(
+                    chunk_id="azusa-001",
+                    text="Azusa provides HNSW and RAG retrieval through adapters.",
+                    source="mock://azusa",
+                ),
+            ]
+        )
+        ids = [chunk.chunk_id for chunk in selected]
+        if len(ids) != len(set(ids)):
+            raise ValueError("Mock Azusa chunk_id 不得重复")
+        self._chunks = {chunk.chunk_id: chunk for chunk in selected}
 
     def search_azusa(self, query: str, k: int, mode: str) -> SearchResponse:
         """用简单词项匹配搜索内存中的教学证据。"""

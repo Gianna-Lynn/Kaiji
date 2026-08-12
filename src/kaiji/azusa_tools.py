@@ -19,9 +19,14 @@ class SearchAzusaArgs(BaseModel):
     """约束 search_azusa 工具的查询、数量和检索模式。"""
 
     model_config = ConfigDict(extra="forbid")
-    query: StrictStr = Field(min_length=2)
-    k: StrictInt = Field(default=3, ge=1, le=20)
-    mode: StrictStr = Field(default="hybrid", min_length=1)
+
+    query: StrictStr = Field(min_length=2, description="用于检索证据的自然语言查询。")
+    k: StrictInt = Field(default=3, ge=1, le=20, description="最多返回的证据数量。")
+    mode: StrictStr = Field(
+        default="hybrid",
+        min_length=1,
+        description="Azusa 检索模式；默认使用 hybrid。",
+    )
 
     @field_validator("query", "mode")
     @classmethod
@@ -35,6 +40,7 @@ class GetChunkArgs(BaseModel):
     """约束 get_chunk_by_id 工具的稳定证据编号。"""
 
     model_config = ConfigDict(extra="forbid")
+
     chunk_id: StrictStr = Field(min_length=1)
 
     @field_validator("chunk_id")
@@ -45,26 +51,72 @@ class GetChunkArgs(BaseModel):
         return value
 
 
-def build_azusa_registry(adapter: AzusaAdapter, *, tool_timeout_seconds: float = 4.0) -> ToolRegistry:
-    """把两个稳定 Azusa 语义调用注册成经过校验的 Kaiji 工具。
+def build_azusa_registry(
+    adapter: AzusaAdapter, *, tool_timeout_seconds: float = 4.0
+) -> ToolRegistry:
+    """注册两个 Azusa 语义工具，并保留适配器错误的重试属性。"""
 
-    TODO 7d 必须注册且只注册 ``search_azusa`` 与 ``get_chunk_by_id``：参数模型
-    分别为 ``SearchAzusaArgs``、``GetChunkArgs``，结果模型分别为
-    ``SearchResponse``、``ChunkResponse``，两者的 ``max_retries`` 都是 1。
-
-    handler 接收的是 Executor 已用参数模型校验过的 ``BaseModel``，仍应通过对应
-    参数模型恢复明确类型，并把默认值和显式值原样、恰好一次地传给 Adapter。
-    Adapter 返回 Pydantic 对象，handler 返回 JSON 兼容字典；若 Adapter 抛出
-    ``AzusaAdapterError``，必须转成 ``ToolExecutionError`` 并原样传播
-    ``retryable``。参数校验失败发生在 handler 之前，此时 Adapter 不应被调用，
-    ``attempts`` 也应保持为 0；真正的有限重试只由 ``ToolExecutor`` 执行。
-    """
-
-    if type(tool_timeout_seconds) is not float and type(tool_timeout_seconds) is not int:
+    if (
+        type(tool_timeout_seconds) is not float
+        and type(tool_timeout_seconds) is not int
+    ):
         raise TypeError("tool_timeout_seconds 必须是真正的有限正数")
-    if isinstance(tool_timeout_seconds, bool) or not math.isfinite(tool_timeout_seconds) or tool_timeout_seconds <= 0:
+    if (
+        isinstance(tool_timeout_seconds, bool)
+        or not math.isfinite(tool_timeout_seconds)
+        or tool_timeout_seconds <= 0
+    ):
         raise ValueError("tool_timeout_seconds 必须是真正的有限正数")
+    registry = ToolRegistry()
 
-    # TODO 7d：定义两个 handler、构造精确的 ToolDefinition 并完成注册。
-    # 工具名称、说明、参数/结果模型和 max_retries 都属于可执行契约，不可省略。
-    raise NotImplementedError("TODO 7d：注册两个 Azusa 工具及其重试边界")
+    def execution_error(exc: AzusaAdapterError) -> ToolExecutionError:
+        """在 Registry 边界再次守住严格 bool，不把非法值交给真值判断。"""
+        if type(exc.retryable) is not bool:
+            return ToolExecutionError("Adapter 返回了非法 retryable", retryable=False)
+        return ToolExecutionError(str(exc), retryable=exc.retryable)
+
+    def search(args: BaseModel) -> dict:
+        """校验搜索参数并调用 AzusaAdapter。"""
+
+        parsed = SearchAzusaArgs.model_validate(args)
+        try:
+            return adapter.search_azusa(parsed.query, parsed.k, parsed.mode).model_dump(
+                mode="json"
+            )
+        except AzusaAdapterError as exc:
+            raise execution_error(exc) from exc
+
+    def get_chunk(args: BaseModel) -> dict:
+        """校验证据编号并调用 AzusaAdapter。"""
+
+        parsed = GetChunkArgs.model_validate(args)
+        try:
+            return adapter.get_chunk_by_id(parsed.chunk_id).model_dump(mode="json")
+        except AzusaAdapterError as exc:
+            raise execution_error(exc) from exc
+
+    registry.register(
+        ToolDefinition(
+            name="search_azusa",
+            description=(
+                "搜索可引用的 Azusa 证据库；结果包含稳定 chunk_id，可用于回答末尾引用。"
+            ),
+            arguments_model=SearchAzusaArgs,
+            result_model=SearchResponse,
+            handler=search,
+            timeout_seconds=tool_timeout_seconds,
+            max_retries=1,
+        )
+    )
+    registry.register(
+        ToolDefinition(
+            name="get_chunk_by_id",
+            description="按稳定 chunk_id 读取一条完整证据。",
+            arguments_model=GetChunkArgs,
+            result_model=ChunkResponse,
+            handler=get_chunk,
+            timeout_seconds=tool_timeout_seconds,
+            max_retries=1,
+        )
+    )
+    return registry

@@ -8,3 +8,6 @@ __pycache__/
 .coverage
 htmlcov/
 .venv/
+artifacts/
+*.sqlite
+*.sqlite3
