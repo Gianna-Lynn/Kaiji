@@ -6,6 +6,7 @@ from pathlib import Path
 import pytest
 from pydantic import ValidationError
 
+import kaiji.evaluation as evaluation_module
 from kaiji.evaluation import (
     EvalCase,
     EvalObservation,
@@ -79,9 +80,7 @@ def test_reference_observation_is_only_pipeline_gold_fixture() -> None:
             assert observation.successful_tool_calls == 0
         else:
             assert observation.selected_tool == case.expected_tool
-            assert observation.arguments_correct == (
-                case.category != "argument_error"
-            )
+            assert observation.arguments_correct == (case.category != "argument_error")
 
         if case.expected_stop_reason == StopReason.TOOL_FAILED:
             assert observation.successful_tool_calls == 0
@@ -274,6 +273,50 @@ def make_case(case_id: str) -> EvalCase:
     )
 
 
+def test_todo_11b_unique_index_isolated_from_alignment_and_metrics() -> None:
+    """TODO 11b 只建立唯一索引，不进入 11d 对齐或 11e 聚合。"""
+
+    first = make_case("first")
+    second = make_case("second")
+    assert evaluation_module._index_by_unique_case_id(
+        [first, second],
+        "评测用例",
+    ) == {"first": first, "second": second}
+    with pytest.raises(ValueError, match="重复项: first"):
+        evaluation_module._index_by_unique_case_id(
+            [first, first],
+            "评测用例",
+        )
+
+
+def test_todo_11d_alignment_isolated_from_metric_formulas() -> None:
+    """TODO 11d 只验证覆盖并恢复 case 顺序，不计算任何比率。"""
+
+    cases = [make_case("first"), make_case("second")]
+    second = make_observation("second")
+    first = make_observation("first")
+
+    assert evaluation_module._align_observations(cases, [second, first]) == [
+        first,
+        second,
+    ]
+    with pytest.raises(ValueError, match="缺失: second"):
+        evaluation_module._align_observations(cases, [first])
+
+
+def test_todo_11e_metrics_use_already_aligned_observations() -> None:
+    """TODO 11e 可注入 11d 结果，证明公式反馈不被身份对齐实现掩盖。"""
+
+    case = make_case("case")
+    observation = make_observation("case")
+
+    report = evaluation_module._aggregate_aligned([case], [observation])
+
+    assert report.case_count == 1
+    assert report.task_success_rate == 1.0
+    assert report.average_steps == 1.0
+
+
 def test_eval_rejects_missing_or_unexpected_observations() -> None:
     cases = [make_case("case-1"), make_case("case-2")]
 
@@ -305,7 +348,7 @@ def test_eval_rejects_duplicate_case_and_observation_ids() -> None:
         )
 
 
-def test_load_cases_rejects_duplicate_ids(tmp_path) -> None:
+def test_todo_11c_load_cases_rejects_duplicate_ids(tmp_path) -> None:
     path = tmp_path / "cases.jsonl"
     case = make_case("case-1").model_dump(mode="json")
     path.write_text(
@@ -345,7 +388,7 @@ def test_load_cases_preserves_non_empty_file_order(tmp_path) -> None:
         {"tool_calls": 1, "unnecessary_tool_calls": 2},
     ],
 )
-def test_observation_rejects_invalid_counts_and_measurements(
+def test_todo_11a_observation_rejects_invalid_counts_and_measurements(
     changes: dict[str, object],
 ) -> None:
     values = {
@@ -364,3 +407,76 @@ def test_observation_rejects_invalid_counts_and_measurements(
 
     with pytest.raises(ValidationError):
         EvalObservation(**values)
+
+
+@pytest.mark.parametrize(
+    "changes",
+    [
+        {"task_success": 1},
+        {"arguments_correct": "false"},
+        {"tool_calls": True},
+        {"successful_tool_calls": True},
+        {"retry_recovered": 1},
+        {"unnecessary_tool_calls": True},
+        {"steps": True},
+        {"citation_supported": "true"},
+    ],
+)
+def test_observation_rejects_coerced_bool_and_integer_boundaries(changes) -> None:
+    values = make_observation("case-1").model_dump()
+    values.update(changes)
+
+    with pytest.raises(ValidationError):
+        EvalObservation.model_validate(values)
+
+
+@pytest.mark.parametrize(
+    "changes",
+    [
+        {"max_tool_calls": True},
+        {"expects_retry_recovery": 1},
+        {"expects_citation": "false"},
+    ],
+)
+def test_eval_case_rejects_coerced_safety_fields(changes) -> None:
+    values = make_case("case-1").model_dump()
+    values.update(changes)
+
+    with pytest.raises(ValidationError):
+        EvalCase.model_validate(values)
+
+
+@pytest.mark.parametrize(
+    "changes",
+    [
+        {"case_id": "   "},
+        {"selected_tool": "   "},
+        {"selected_tool": None, "arguments_correct": True},
+        {"retry_recovered": True, "tool_calls": 1},
+        {
+            "citation_supported": True,
+            "successful_tool_calls": 0,
+        },
+    ],
+)
+def test_observation_rejects_ambiguous_cross_field_states(changes) -> None:
+    values = make_observation("case-1").model_dump()
+    values.update(changes)
+    with pytest.raises(ValidationError):
+        EvalObservation.model_validate(values)
+
+
+@pytest.mark.parametrize(
+    "changes",
+    [
+        {"case_id": "   "},
+        {"prompt": "   "},
+        {"category": "   "},
+        {"expected_tool": "   "},
+    ],
+)
+def test_eval_case_rejects_blank_identity_and_contract_text(changes) -> None:
+    values = make_case("case-1").model_dump()
+    values.update(changes)
+    with pytest.raises(ValidationError):
+        EvalCase.model_validate(values)

@@ -9,7 +9,15 @@ from collections.abc import Callable
 from pathlib import Path
 from typing import TypeVar
 
-from pydantic import BaseModel, Field, model_validator
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    Field,
+    StrictBool,
+    StrictInt,
+    field_validator,
+    model_validator,
+)
 
 from kaiji.models import StopReason
 
@@ -17,14 +25,34 @@ from kaiji.models import StopReason
 class EvalCase(BaseModel):
     """定义一条固定评测用例及其期望行为。"""
 
+    model_config = ConfigDict(extra="forbid")
+
     case_id: str
     prompt: str
     category: str
     expected_stop_reason: StopReason
     expected_tool: str | None = None
-    expects_retry_recovery: bool = False
-    expects_citation: bool = False
-    max_tool_calls: int = Field(default=1, ge=0)
+    expects_retry_recovery: StrictBool = False
+    expects_citation: StrictBool = False
+    max_tool_calls: StrictInt = Field(default=1, ge=0)
+
+    @field_validator("case_id", "prompt", "category")
+    @classmethod
+    def text_boundaries_are_not_blank(cls, value: str) -> str:
+        """用例身份、提示与分类不得为空白。"""
+
+        if not value.strip():
+            raise ValueError("EvalCase 文本边界不得为空白")
+        return value
+
+    @field_validator("expected_tool")
+    @classmethod
+    def expected_tool_is_not_blank(cls, value: str | None) -> str | None:
+        """空值表示不要求工具；空白字符串不承担第三种语义。"""
+
+        if value is not None and not value.strip():
+            raise ValueError("expected_tool 不得为空白")
+        return value
 
 
 class EvalObservation(BaseModel):
@@ -53,18 +81,38 @@ class EvalObservation(BaseModel):
       证据支持回答中的相关表述时才为真；不要求引用的 case 使用 ``None``。
     """
 
+    model_config = ConfigDict(extra="forbid")
+
     case_id: str
-    task_success: bool
+    task_success: StrictBool
     selected_tool: str | None
-    arguments_correct: bool | None
-    tool_calls: int = Field(default=0, ge=0)
-    successful_tool_calls: int = Field(default=0, ge=0)
-    retry_recovered: bool | None = None
-    unnecessary_tool_calls: int = Field(default=0, ge=0)
-    steps: int = Field(ge=1)
+    arguments_correct: StrictBool | None
+    tool_calls: StrictInt = Field(default=0, ge=0)
+    successful_tool_calls: StrictInt = Field(default=0, ge=0)
+    retry_recovered: StrictBool | None = None
+    unnecessary_tool_calls: StrictInt = Field(default=0, ge=0)
+    steps: StrictInt = Field(ge=1)
     latency_ms: float = Field(ge=0, allow_inf_nan=False)
     stop_reason: StopReason
-    citation_supported: bool | None = None
+    citation_supported: StrictBool | None = None
+
+    @field_validator("case_id")
+    @classmethod
+    def case_id_is_not_blank(cls, value: str) -> str:
+        """Observation 必须具有可对齐的非空身份。"""
+
+        if not value.strip():
+            raise ValueError("case_id 不得为空白")
+        return value
+
+    @field_validator("selected_tool")
+    @classmethod
+    def selected_tool_is_not_blank(cls, value: str | None) -> str | None:
+        """没有选择用 None 表示，不能使用空白字符串。"""
+
+        if value is not None and not value.strip():
+            raise ValueError("selected_tool 不得为空白")
+        return value
 
     @model_validator(mode="after")
     def call_counts_are_consistent(self) -> EvalObservation:
@@ -74,6 +122,12 @@ class EvalObservation(BaseModel):
             raise ValueError("successful_tool_calls 不能超过 tool_calls")
         if self.unnecessary_tool_calls > self.tool_calls:
             raise ValueError("unnecessary_tool_calls 不能超过 tool_calls")
+        if self.selected_tool is None and self.arguments_correct is not None:
+            raise ValueError("没有工具选择时 arguments_correct 必须为 None")
+        if self.retry_recovered is True and self.tool_calls < 2:
+            raise ValueError("重试恢复至少需要两次实际工具尝试")
+        if self.citation_supported is True and self.successful_tool_calls == 0:
+            raise ValueError("受支持引用必须来自至少一次成功工具结果")
         return self
 
 
@@ -139,13 +193,11 @@ def _percentile(values: list[float], percentile: float) -> float:
     return ordered[index]
 
 
-def aggregate(cases: list[EvalCase], observations: list[EvalObservation]) -> EvalReport:
-    """按固定分母聚合与用例一一对应的完整观测集。
-
-    工具选择和参数准确率只以 ``expected_tool`` 非空的用例为分母；重试与
-    引用指标分别以显式要求该能力的用例为分母。适用字段为 ``None`` 时按
-    失败计入既定分母，不能通过缺失观测缩小分母。
-    """
+def _align_observations(
+    cases: list[EvalCase],
+    observations: list[EvalObservation],
+) -> list[EvalObservation]:
+    """严格检查两侧唯一覆盖，并按 case 文件顺序返回观测。"""
 
     case_by_id = _index_by_unique_case_id(cases, "评测用例")
     observation_by_id = _index_by_unique_case_id(observations, "评测观测")
@@ -155,9 +207,24 @@ def aggregate(cases: list[EvalCase], observations: list[EvalObservation]) -> Eva
         missing = ", ".join(sorted(case_ids - observation_ids)) or "无"
         unexpected = ", ".join(sorted(observation_ids - case_ids)) or "无"
         raise ValueError(
-            "评测观测必须恰好覆盖每条用例一次；"
-            f"缺失: {missing}；额外: {unexpected}"
+            f"评测观测必须恰好覆盖每条用例一次；缺失: {missing}；额外: {unexpected}"
         )
+    return [observation_by_id[case.case_id] for case in cases]
+
+
+def _aggregate_aligned(
+    cases: list[EvalCase],
+    ordered_observations: list[EvalObservation],
+) -> EvalReport:
+    """在 11d 已完成身份对齐的前提下计算固定分母指标。
+
+    工具选择和参数准确率只以 ``expected_tool`` 非空的用例为分母；重试与
+    引用指标分别以显式要求该能力的用例为分母。适用字段为 ``None`` 时按
+    失败计入既定分母，不能通过缺失观测缩小分母。
+    """
+
+    if len(cases) != len(ordered_observations):
+        raise ValueError("已对齐观测数量必须等于 case 数量")
 
     selection_scores = []
     argument_scores = []
@@ -168,10 +235,7 @@ def aggregate(cases: list[EvalCase], observations: list[EvalObservation]) -> Eva
     unnecessary_calls = 0
 
     task_success_scores = []
-    ordered_observations = []
-    for case in cases:
-        item = observation_by_id[case.case_id]
-        ordered_observations.append(item)
+    for case, item in zip(cases, ordered_observations, strict=True):
         task_success_scores.append(
             item.task_success
             and item.stop_reason == case.expected_stop_reason
@@ -199,8 +263,7 @@ def aggregate(cases: list[EvalCase], observations: list[EvalObservation]) -> Eva
             unnecessary_calls / total_calls if total_calls else 0.0
         ),
         average_steps=(
-            sum(item.steps for item in ordered_observations)
-            / len(ordered_observations)
+            sum(item.steps for item in ordered_observations) / len(ordered_observations)
             if ordered_observations
             else 0.0
         ),
@@ -215,6 +278,12 @@ def aggregate(cases: list[EvalCase], observations: list[EvalObservation]) -> Eva
         ),
         citation_supported_rate=_rate(citation_scores),
     )
+
+
+def aggregate(cases: list[EvalCase], observations: list[EvalObservation]) -> EvalReport:
+    """先严格对齐完整观测，再把有序输入交给固定指标公式。"""
+
+    return _aggregate_aligned(cases, _align_observations(cases, observations))
 
 
 def run_eval(
