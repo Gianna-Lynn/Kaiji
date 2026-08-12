@@ -902,6 +902,7 @@ python -m pytest -q -rs tests/test_azusa_live_integration.py
   后可见）：`F:\Repositories\Azusa\rag\docs\kaiji_gateway_assignment.md`
 - Azusa 主线对接说明：`F:\Repositories\Azusa\docs\kaiji_integration.md`
 - TODO13—15 Reliability Eval L1/L2/L3：`docs/reliability-course-l1-l3.md`
+- Reliability 课程答案绿灯/练习红灯记录：`docs/reliability-course-validation.md`
 - Reliability Eval 固定契约：`docs/reliability-eval-contract.md`
 - 强制要求到直接测试追踪：`docs/reliability-eval-traceability.md`
 
