@@ -610,6 +610,8 @@ python -m pytest tests/test_azusa_adapter.py
 Checkpoint 是一次执行的完整恢复快照。JSON 第一层按 `thread_id` 隔离，第二层按
 `checkpoint_id` 保存 `state`。相同线程和编号再次保存时覆盖旧状态，并把这次成功的
 `save` 视为最新写入；因此覆盖旧编号后，该编号也必须成为 `latest()` 的结果。
+两层身份都必须是真正的非空、非纯空白字符串；查询入口与外部已有文件使用相同标准。
+文件必须是标准有限 JSON，Python 默认可解析的 `NaN`/`Infinity` 仍属于损坏数据。
 
 `load()` 和 `latest()` 找不到目标时返回 `None`，恢复出的数据必须重新经过
 `Checkpoint` 外壳校验。键不存在才表示“找不到”；键存在但值为 JSON `null`、列表或
@@ -625,7 +627,10 @@ Checkpoint 是一次执行的完整恢复快照。JSON 第一层按 `thread_id` 
 入口的熟悉程度先写 `save()`，否则会被尚未建立的存储边界阻塞。
 
 ```powershell
-python -m pytest tests/test_persistence.py -k checkpoint_read_boundary
+python -m pytest tests/test_persistence.py -k todo_8a
+python -m pytest tests/test_persistence.py -k todo_8b
+python -m pytest tests/test_persistence.py -k todo_8c
+python -m pytest tests/test_persistence.py -k todo_8d
 python -m pytest tests/test_persistence.py -k checkpoint
 ```
 
@@ -647,13 +652,18 @@ Memory 同样严格区分“键不存在”和“键存在但记录损坏”：J
 `entry.key`，否则无法可靠判断覆盖和查询的是哪条事实。`put()` 在写入新事实前也必须
 校验已有 Store；不能借一次看似成功的新写入，把旧损坏静默保留下去。Memory 与
 Checkpoint 共用同目录临时文件再 `replace` 的原子写入边界，替换失败时旧文件不变。
+`user_id`、外层 key 与 `entry.key` 均不得为空白；未知记录字段不能静默丢弃，非标准
+`NaN`/`Infinity` 也不能穿过读取边界。
 
 练习同样从读取边界开始：**9a `_read_all()` 全量校验 → 9b `put()` → 9c `get()` →
 9d `list()`**。这样写入、单条读取和列表读取会共享同一套损坏数据结论，不会各自长出
 三种互相矛盾的解析规则。
 
 ```powershell
-python -m pytest tests/test_persistence.py -k memory_read_boundary
+python -m pytest tests/test_persistence.py -k todo_9a
+python -m pytest tests/test_persistence.py -k todo_9b
+python -m pytest tests/test_persistence.py -k todo_9c
+python -m pytest tests/test_persistence.py -k todo_9d
 python -m pytest tests/test_persistence.py -k memory
 ```
 
@@ -676,6 +686,8 @@ python -m pytest tests/test_persistence.py -k memory
   检索信息，不代替逐事件详情；
 - `events` 保持 Runtime 产生的原始顺序；每个 `TraceEvent.data` 只描述该事件当时的
   结构化事实，不是 Message 正文，也不是 run 级 metadata；
+- `step` 必须是真正的正整数并按时间线非递减；`data` 与 `metadata` 必须是有限 JSON，
+  不能依赖写盘时才偶然失败；
 - `TraceRecord.stop_reason` 是便于索引和统计的终止摘要，必须与唯一且位于末尾的
   `stop` Event 的 `data.reason` 相同；空 events、无 stop、多个 stop、stop 后仍有事件、
   缺失或非法 reason 都属于结构破坏；
@@ -695,6 +707,11 @@ Trace Store 负责结构一致性、存储与回放，不负责判断最终答�
 iter_records；源码中的方法排列也遵循这一依赖顺序。
 
 ```powershell
+python -m pytest tests/test_tracing.py -k todo_10a
+python -m pytest tests/test_tracing.py -k todo_10b
+python -m pytest tests/test_tracing.py -k todo_10c
+python -m pytest tests/test_tracing.py -k todo_10d
+python -m pytest tests/test_tracing.py -k todo_10e
 python -m pytest tests/test_tracing.py
 ```
 
@@ -759,6 +776,10 @@ P50/P95 使用排序后的 nearest-rank 定义。所有计数和延迟不得为�
 不得超过实际调用数。测试必须使用混合成功/失败观测给出精确分数；全满分样本不能单独
 证明公式正确。
 
+布尔和整数安全字段使用严格运行时类型，不能接受 `1`、`"false"` 或 `True` 冒充另一
+种语义。没有工具选择时 `arguments_correct` 必须为 `None`；重试恢复至少对应两次实际
+handler 尝试；受支持引用至少来自一次成功工具结果。
+
 `reference_observation()` 只构造与 case 预期停止状态内部一致的合成观测，用来证明
 指标公式；它不得把预期失败的工具伪造成成功，也不能证明 20 条 Agent 行为已经跑过。
 `run_eval(cases, runner)` 才是真实 runner 的注入点。把统一 Runtime、LangGraph、
@@ -766,11 +787,18 @@ Checkpoint 和 Memory 场景接入同一个真实黑盒 runner 属于后续 L3 �
 fixture 改名就宣称完成。
 
 练习按依赖顺序实现：**11a Observation 跨字段不变量 → 11b 唯一 ID 索引 →
-11c JSONL 用例加载 → 11d case/observation 严格对齐 → 11e 指标聚合**。11a 的合法样例
+11c JSONL 用例加载 → 11d `_align_observations()` 严格对齐 →
+11e `_aggregate_aligned()` 指标公式**。公开的 `aggregate()` 只负责按顺序组合 11b、11d
+与 11e；这样每个子题都有不依赖后续实现的窄反馈。11a 的合法样例
 必须继续可构造，所以它不能用无条件 `NotImplementedError` 占位；相应红灯会表现为
 “非法计数组合没有被拒绝”。11b/11c 的重复 ID 红灯同理，是精确契约失败而非测试松散。
 
 ```powershell
+python -m pytest tests/test_evaluation.py -k todo_11a
+python -m pytest tests/test_evaluation.py -k todo_11b
+python -m pytest tests/test_evaluation.py -k todo_11c
+python -m pytest tests/test_evaluation.py -k todo_11d
+python -m pytest tests/test_evaluation.py -k todo_11e
 python -m pytest tests/test_evaluation.py
 python -m kaiji.eval_demo
 ```

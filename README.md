@@ -92,3 +92,39 @@ FastAPI、Docker Compose 与部署包装属于收口加分项，不得阻塞核�
 - Agent 生成的代码必须由项目作者阅读、解释、修改和测试。
 
 推荐验证顺序：单元测试 → Runtime 小闭环 → Trace/Eval 回归 → Mock Adapter → Azusa Adapter → Demo。
+
+## Reliability Eval v0.2 扩展分支
+
+`codex/kaiji-reliability-eval` 在课程答案基线上增加真实 OpenAI-compatible Provider、
+Agent Behavior/Fault Suite、确定性 Scorer、四 Harness 对照和官方 SQLite 恢复。
+现有 `eval/cases.jsonl` 仍是组件 Contract Suite，不能与真实 Agent 成绩混用。
+`eval/real_behavior_cases.jsonl` 专供真实自主 Behavior Pilot；要求模型故意重复、越界
+或不终止的 Scripted/Fault 场景不得计入真实模型行为成功率。
+
+离线验证命令：
+
+```powershell
+python -m pytest
+$env:PYTHONPATH=(Resolve-Path 'src').Path
+python -m kaiji.experiment --provider scripted --suite smoke
+python -m kaiji.experiment --provider scripted --suite reliability --ablation
+python -m kaiji.experiment --provider scripted --suite formal --repeats 3
+$env:PYTHONPATH=(Resolve-Path 'src').Path
+python -m kaiji.formal_runner --preflight
+```
+
+Formal Preflight 把 40 条真实行为契约重复三次，与 20 条确定性故障契约重复三次，
+分别生成 120 与 60 Episode 报告。它只使用 Scripted/Mock Provider，不调用模型 API。
+真实 Formal 使用逐请求预算账本、逐 Episode hash 链和断点续跑；部分矩阵不生成
+Aggregate，也不得与 Reliability 报告合并成一个“180 条真实模型成绩”。
+
+真实模型和 Azusa 命令默认不属于日常回归，必须显式提供临时凭据、网关地址与调用
+预算。验证结果、不能夸大的结论和要求追踪分别见
+`docs/reliability-eval-v0.2-report.md`、`docs/reliability-eval-contract.md` 与
+`docs/reliability-eval-traceability.md`；冻结范围与独立审计证据见
+`docs/freeze-audit-v0.2.md`。
+
+当前 DeepSeek Real Behavior Formal 已完成 40 条 × 3 次：严格 Task Success
+116/120；按适用分母，工具选择 96/96、参数 92/96、无工具 24/24，引用
+Precision/Recall 均为 1.0。该成绩来自受控 Mock 工具 fixture，不等于
+开放域 Benchmark 或生产表现；详细请求、Token、费用和 Bad Case 见验证报告。
