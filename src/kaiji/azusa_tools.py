@@ -20,9 +20,13 @@ class SearchAzusaArgs(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
-    query: StrictStr = Field(min_length=2)
-    k: StrictInt = Field(default=3, ge=1, le=20)
-    mode: StrictStr = Field(default="hybrid", min_length=1)
+    query: StrictStr = Field(min_length=2, description="用于检索证据的自然语言查询。")
+    k: StrictInt = Field(default=3, ge=1, le=20, description="最多返回的证据数量。")
+    mode: StrictStr = Field(
+        default="hybrid",
+        min_length=1,
+        description="Azusa 检索模式；默认使用 hybrid。",
+    )
 
     @field_validator("query", "mode")
     @classmethod
@@ -47,12 +51,21 @@ class GetChunkArgs(BaseModel):
         return value
 
 
-def build_azusa_registry(adapter: AzusaAdapter, *, tool_timeout_seconds: float = 4.0) -> ToolRegistry:
+def build_azusa_registry(
+    adapter: AzusaAdapter, *, tool_timeout_seconds: float = 4.0
+) -> ToolRegistry:
     """注册两个 Azusa 语义工具，并保留适配器错误的重试属性。"""
 
-    if type(tool_timeout_seconds) is not float and type(tool_timeout_seconds) is not int:
+    if (
+        type(tool_timeout_seconds) is not float
+        and type(tool_timeout_seconds) is not int
+    ):
         raise TypeError("tool_timeout_seconds 必须是真正的有限正数")
-    if isinstance(tool_timeout_seconds, bool) or not math.isfinite(tool_timeout_seconds) or tool_timeout_seconds <= 0:
+    if (
+        isinstance(tool_timeout_seconds, bool)
+        or not math.isfinite(tool_timeout_seconds)
+        or tool_timeout_seconds <= 0
+    ):
         raise ValueError("tool_timeout_seconds 必须是真正的有限正数")
     registry = ToolRegistry()
 
@@ -67,9 +80,9 @@ def build_azusa_registry(adapter: AzusaAdapter, *, tool_timeout_seconds: float =
 
         parsed = SearchAzusaArgs.model_validate(args)
         try:
-            return adapter.search_azusa(
-                parsed.query, parsed.k, parsed.mode
-            ).model_dump(mode="json")
+            return adapter.search_azusa(parsed.query, parsed.k, parsed.mode).model_dump(
+                mode="json"
+            )
         except AzusaAdapterError as exc:
             raise execution_error(exc) from exc
 
@@ -85,7 +98,9 @@ def build_azusa_registry(adapter: AzusaAdapter, *, tool_timeout_seconds: float =
     registry.register(
         ToolDefinition(
             name="search_azusa",
-            description="按查询、数量和检索模式搜索 Azusa 证据。",
+            description=(
+                "搜索可引用的 Azusa 证据库；结果包含稳定 chunk_id，可用于回答末尾引用。"
+            ),
             arguments_model=SearchAzusaArgs,
             result_model=SearchResponse,
             handler=search,

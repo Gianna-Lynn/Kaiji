@@ -6,10 +6,24 @@ import json
 from pathlib import Path
 from typing import Any
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 
 _MISSING = object()
+
+
+def _reject_json_constant(value: str) -> None:
+    """拒绝 JSON 标准之外的 NaN 与 Infinity 常量。"""
+
+    raise ValueError(f"{value} 不是合法的有限 JSON 数值")
+
+
+def _validate_identifier(value: str, *, label: str) -> str:
+    """拒绝非字符串、空字符串和纯空白持久化身份键。"""
+
+    if not isinstance(value, str) or not value.strip():
+        raise ValueError(f"{label} 必须是非空字符串")
+    return value
 
 
 def _read_json_object(path: Path, *, label: str) -> dict[str, Any]:
@@ -17,7 +31,10 @@ def _read_json_object(path: Path, *, label: str) -> dict[str, Any]:
 
     if not path.exists():
         return {}
-    payload = json.loads(path.read_text(encoding="utf-8"))
+    payload = json.loads(
+        path.read_text(encoding="utf-8"),
+        parse_constant=_reject_json_constant,
+    )
     if not isinstance(payload, dict):
         raise ValueError(f"{label} JSON 根必须是对象")
     return payload
@@ -29,7 +46,7 @@ def _write_json_atomic(path: Path, payload: Any) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     temporary = path.with_suffix(path.suffix + ".tmp")
     temporary.write_text(
-        json.dumps(payload, ensure_ascii=False, indent=2),
+        json.dumps(payload, ensure_ascii=False, indent=2, allow_nan=False),
         encoding="utf-8",
     )
     temporary.replace(path)
@@ -38,9 +55,18 @@ def _write_json_atomic(path: Path, payload: Any) -> None:
 class Checkpoint(BaseModel):
     """表示某个线程在指定检查点保存的完整执行状态。"""
 
-    thread_id: str
-    checkpoint_id: str
+    model_config = ConfigDict(extra="forbid")
+
+    thread_id: str = Field(min_length=1)
+    checkpoint_id: str = Field(min_length=1)
     state: dict[str, Any]
+
+    @field_validator("thread_id", "checkpoint_id")
+    @classmethod
+    def identifiers_are_not_blank(cls, value: str) -> str:
+        """持久化身份不能只由空白字符组成。"""
+
+        return _validate_identifier(value, label="Checkpoint 标识")
 
 
 class JsonCheckpointStore:
@@ -62,16 +88,18 @@ class JsonCheckpointStore:
         payload = _read_json_object(self._path, label="Checkpoint")
         checkpoints_by_thread: dict[str, dict[str, dict[str, Any]]] = {}
         for thread_id, checkpoints in payload.items():
+            _validate_identifier(thread_id, label="Checkpoint thread_id")
             if not isinstance(checkpoints, dict):
-                raise ValueError(
-                    f"Checkpoint 线程 {thread_id!r} 的内容必须是对象"
-                )
+                raise ValueError(f"Checkpoint 线程 {thread_id!r} 的内容必须是对象")
             validated_checkpoints: dict[str, dict[str, Any]] = {}
             for checkpoint_id, state in checkpoints.items():
+                _validate_identifier(
+                    checkpoint_id,
+                    label="Checkpoint checkpoint_id",
+                )
                 if not isinstance(state, dict):
                     raise ValueError(
-                        "Checkpoint state 必须是对象: "
-                        f"{thread_id!r}/{checkpoint_id!r}"
+                        f"Checkpoint state 必须是对象: {thread_id!r}/{checkpoint_id!r}"
                     )
                 validated_checkpoints[checkpoint_id] = state
             checkpoints_by_thread[thread_id] = validated_checkpoints
@@ -90,9 +118,15 @@ class JsonCheckpointStore:
     def load(self, thread_id: str, checkpoint_id: str) -> Checkpoint | None:
         """读取指定检查点；找不到时返回空值。"""
 
-        state = self._read_all().get(thread_id, {}).get(
-            checkpoint_id,
-            _MISSING,
+        _validate_identifier(thread_id, label="thread_id")
+        _validate_identifier(checkpoint_id, label="checkpoint_id")
+        state = (
+            self._read_all()
+            .get(thread_id, {})
+            .get(
+                checkpoint_id,
+                _MISSING,
+            )
         )
         if state is _MISSING:
             return None
@@ -105,6 +139,7 @@ class JsonCheckpointStore:
     def latest(self, thread_id: str) -> Checkpoint | None:
         """读取指定线程最近保存的检查点。"""
 
+        _validate_identifier(thread_id, label="thread_id")
         checkpoints = self._read_all().get(thread_id, {})
         if not checkpoints:
             return None
@@ -115,12 +150,22 @@ class JsonCheckpointStore:
             state=checkpoints[checkpoint_id],
         )
 
+
 class MemoryEntry(BaseModel):
     """表示由应用策略筛选后允许长期保存的一条事实。"""
 
-    key: str
+    model_config = ConfigDict(extra="forbid")
+
+    key: str = Field(min_length=1)
     value: str
     tags: list[str] = Field(default_factory=list)
+
+    @field_validator("key")
+    @classmethod
+    def key_is_not_blank(cls, value: str) -> str:
+        """Memory key 必须能稳定承担用户内身份。"""
+
+        return _validate_identifier(value, label="Memory key")
 
 
 class JsonMemoryStore:
@@ -142,10 +187,12 @@ class JsonMemoryStore:
         payload = _read_json_object(self._path, label="Memory")
         entries_by_user: dict[str, dict[str, Any]] = {}
         for user_id, entries in payload.items():
+            _validate_identifier(user_id, label="Memory user_id")
             if not isinstance(entries, dict):
                 raise ValueError(f"Memory 用户 {user_id!r} 的内容必须是对象")
             validated_entries: dict[str, Any] = {}
             for key, raw_entry in entries.items():
+                _validate_identifier(key, label="Memory 存储键")
                 entry = MemoryEntry.model_validate(raw_entry)
                 if entry.key != key:
                     raise ValueError("Memory 存储键与记录中的 entry.key 不一致")
@@ -156,6 +203,7 @@ class JsonMemoryStore:
     def put(self, user_id: str, entry: MemoryEntry) -> None:
         """按用户和键保存或覆盖一条长期事实。"""
 
+        _validate_identifier(user_id, label="user_id")
         data = self._read_all()
         data.setdefault(user_id, {})[entry.key] = entry.model_dump()
         _write_json_atomic(self._path, data)
@@ -163,6 +211,8 @@ class JsonMemoryStore:
     def get(self, user_id: str, key: str) -> MemoryEntry | None:
         """读取一条长期事实；找不到时返回空值。"""
 
+        _validate_identifier(user_id, label="user_id")
+        _validate_identifier(key, label="key")
         payload = self._read_all().get(user_id, {}).get(key, _MISSING)
         if payload is _MISSING:
             return None
@@ -174,6 +224,7 @@ class JsonMemoryStore:
     def list(self, user_id: str) -> list[MemoryEntry]:
         """列出指定用户保存的全部长期事实。"""
 
+        _validate_identifier(user_id, label="user_id")
         entries = []
         for key, payload in self._read_all().get(user_id, {}).items():
             entry = MemoryEntry.model_validate(payload)

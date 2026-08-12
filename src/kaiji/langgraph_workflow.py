@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from typing import Any, Literal, TypedDict
 
+from langgraph.checkpoint.base import BaseCheckpointSaver
 from langgraph.checkpoint.memory import MemorySaver
 from langgraph.graph import END, START, StateGraph
 from langgraph.types import Command, interrupt
@@ -20,6 +21,7 @@ class AgentState(TypedDict, total=False):
     返回或清空不属于自己职责的字段。它不表示运行中的 State 可以随意缺少基础字段：
     ``_initial_state`` 会在首次进入图时建立完整状态，后续节点依赖这项不变量。
 
+    ``state_schema_version`` 标识持久化 State 契约版本；恢复入口只接受当前版本。
     ``question`` 保存不可变的原始用户问题，``rewritten_query`` 保存当前真正
     送往 Azusa 的查询。``step_count`` 只统计 search 节点执行次数，也就是
     检索尝试次数；``retry_count`` 只统计 query rewrite 次数；``max_steps``
@@ -31,6 +33,7 @@ class AgentState(TypedDict, total=False):
     ``stop_reason`` 只由终止节点写入，保存可移植的停止原因字符串。
     """
 
+    state_schema_version: int
     question: str
     rewritten_query: str
     route: Literal["search", "confirm"]
@@ -49,10 +52,13 @@ class AgentState(TypedDict, total=False):
 def _initial_state(question: str, *, max_steps: int) -> AgentState:
     """创建完整状态，并严格拒绝非正整数检索上限。"""
 
+    if not isinstance(question, str) or not question.strip():
+        raise ValueError("question 必须是非空字符串")
     if type(max_steps) is not int or max_steps < 1:
         raise ValueError("max_steps 必须至少为 1")
 
     return AgentState(
+        state_schema_version=1,
         question=question,
         rewritten_query=question,
         evidence=[],
@@ -158,7 +164,7 @@ def _search(adapter: AzusaAdapter, state: AgentState) -> dict[str, Any]:
 def build_agent_graph(
     adapter: AzusaAdapter,
     *,
-    checkpointer: MemorySaver | None = None,
+    checkpointer: BaseCheckpointSaver | None = None,
 ):
     """构建带检索、一次查询改写、人工确认与线程检查点的工作流。
 
@@ -249,6 +255,8 @@ def build_agent_graph(
 def run_graph(graph, question: str, *, thread_id: str, max_steps: int = 3) -> dict:
     """以未使用的线程开始工作流；``max_steps`` 必须是正整数检索上限。"""
 
+    if not isinstance(thread_id, str) or not thread_id.strip():
+        raise ValueError("thread_id 必须是非空字符串")
     config = {"configurable": {"thread_id": thread_id}}
     if graph.get_state(config).values:
         raise ValueError("thread_id 已经存在，只能通过 resume_graph 恢复暂停点")
@@ -258,5 +266,10 @@ def run_graph(graph, question: str, *, thread_id: str, max_steps: int = 3) -> di
 def resume_graph(graph, *, thread_id: str, approved: object) -> dict:
     """在同一 ``thread_id`` 上提交恢复值；审批节点会严格验证其类型。"""
 
+    if not isinstance(thread_id, str) or not thread_id.strip():
+        raise ValueError("thread_id 必须是非空字符串")
     config = {"configurable": {"thread_id": thread_id}}
+    state = graph.get_state(config).values
+    if state.get("state_schema_version") != 1:
+        raise ValueError("Checkpoint State Schema 版本缺失或不受支持")
     return graph.invoke(Command(resume=approved), config=config)

@@ -87,23 +87,21 @@ def test_message_mapping_preserves_roles_content_and_tool_call_id() -> None:
 
 @pytest.mark.parametrize("role", ["user", "assistant"])
 def test_non_tool_message_rejects_tool_result(role: str) -> None:
-    """非 tool 角色不得偷偷携带结构化工具结果。"""
+    """非 tool 角色必须在核心消息边界拒绝结构化工具结果。"""
 
-    message = Message(
-        role=role,
-        content="不合法的角色载荷组合",
-        tool_result=_successful_tool_result(),
-    )
-
-    with pytest.raises(ValueError):
-        to_langchain_messages([message])
+    with pytest.raises(ValidationError):
+        Message(
+            role=role,
+            content="不合法的角色载荷组合",
+            tool_result=_successful_tool_result(),
+        )
 
 
 def test_tool_message_without_result_is_rejected_instead_of_faking_call_id() -> None:
-    """缺少结果的 tool 消息无法可靠生成 ``tool_call_id``。"""
+    """缺少结果的 tool 消息必须在核心消息边界直接拒绝。"""
 
-    with pytest.raises(ValueError):
-        to_langchain_messages([Message(role="tool", content="缺少结构化结果")])
+    with pytest.raises(ValidationError):
+        Message(role="tool", content="缺少结构化结果")
 
 
 def test_search_runnable_invokes_the_structured_tool_boundary(monkeypatch) -> None:
@@ -117,9 +115,7 @@ def test_search_runnable_invokes_the_structured_tool_boundary(monkeypatch) -> No
 
         def invoke(self, payload: dict) -> dict:
             self.calls.append(payload)
-            return SearchResponse(hits=[], mode=payload["mode"]).model_dump(
-                mode="json"
-            )
+            return SearchResponse(hits=[], mode=payload["mode"]).model_dump(mode="json")
 
     spy = SpyTool()
     monkeypatch.setattr(

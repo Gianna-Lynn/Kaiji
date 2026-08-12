@@ -40,9 +40,8 @@ def to_langchain_messages(messages: list[Message]) -> list[BaseMessage]:
     ``ToolMessage``，其 ``tool_call_id`` 必须来自结构化
     ``tool_result.call_id``；缺少工具结果时无法建立调用配对，因此直接拒绝。
 
-    该对照刻意不把 Kaiji 的 assistant JSON 内容还原为 LangChain 原生
-    ``tool_calls``，也不改变 Kaiji 的消息模型。它用于观察框架类型差异，
-    不是两个消息协议之间的无损转换器。
+    该教学对照仍只转换文本 assistant 消息；原生 ``tool_call`` 历史属于
+    Reliability Eval 的无损 Provider 边界，不能在这里被静默降级。
     """
 
     converted: list[BaseMessage] = []
@@ -54,6 +53,8 @@ def to_langchain_messages(messages: list[Message]) -> list[BaseMessage]:
         elif message.role == "assistant":
             if message.tool_result is not None:
                 raise ValueError("assistant 消息不能携带 tool_result")
+            if message.tool_call is not None:
+                raise ValueError("教学对照不支持转换结构化 assistant tool_call")
             converted.append(AIMessage(content=message.content))
         else:
             if message.tool_result is None:

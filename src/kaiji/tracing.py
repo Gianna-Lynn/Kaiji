@@ -6,7 +6,7 @@ import json
 from pathlib import Path
 from typing import Any
 
-from pydantic import BaseModel, Field, ValidationError, model_validator
+from pydantic import BaseModel, ConfigDict, Field, ValidationError, model_validator
 
 from kaiji.models import StopReason, TraceEvent
 
@@ -19,6 +19,8 @@ class TraceRecord(BaseModel):
     事件 ``data.reason`` 表示同一个 :class:`StopReason`。本模型只检查轨迹
     结构是否自洽，不判断最终回答或其他业务结果是否正确。
     """
+
+    model_config = ConfigDict(extra="forbid")
 
     run_id: str = Field(min_length=1)
     events: list[TraceEvent] = Field(min_length=1)
@@ -39,11 +41,23 @@ class TraceRecord(BaseModel):
         try:
             event_reason = StopReason(raw_reason)
         except (TypeError, ValueError) as exc:
-            raise ValueError(
-                "stop 事件的 data.reason 必须是合法 StopReason"
-            ) from exc
+            raise ValueError("stop 事件的 data.reason 必须是合法 StopReason") from exc
         if event_reason != self.stop_reason:
             raise ValueError("stop 事件原因必须与 TraceRecord.stop_reason 一致")
+        steps = [event.step for event in self.events]
+        if steps != sorted(steps):
+            raise ValueError("TraceEvent.step 必须按时间线非递减")
+        try:
+            json.dumps(
+                {
+                    "events": [event.data for event in self.events],
+                    "metadata": self.metadata,
+                },
+                ensure_ascii=False,
+                allow_nan=False,
+            )
+        except (TypeError, ValueError) as exc:
+            raise ValueError("Trace data 与 metadata 必须是有限 JSON 值") from exc
         return self
 
 
@@ -130,7 +144,5 @@ class JsonlTraceStore:
                 separators=(",", ":"),
                 allow_nan=False,
             )
-            summaries.append(
-                f"step={event.step} event={event.event} data={data_text}"
-            )
+            summaries.append(f"step={event.step} event={event.event} data={data_text}")
         return summaries

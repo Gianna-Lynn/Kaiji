@@ -7,7 +7,11 @@ from typing import Protocol
 
 from kaiji.models import (
     Message,
-    ModelAction,
+    ModelCallMetadata,
+    ModelCallResult,
+    ModelUsage,
+    ProviderErrorCode,
+    ProviderFailure,
     RunResult,
     StopReason,
     TraceEvent,
@@ -18,7 +22,7 @@ from kaiji.tools import ToolExecutor
 class DecisionProvider(Protocol):
     """抽象模型决策边界，便于用真实模型或确定性脚本替换。"""
 
-    def decide(self, messages: list[Message]) -> ModelAction: ...
+    def decide(self, messages: list[Message]) -> ModelCallResult: ...
 
 
 class AgentRuntime:
@@ -30,28 +34,78 @@ class AgentRuntime:
         executor: ToolExecutor,
         *,
         max_steps: int = 4,
+        duplicate_guard: bool = True,
     ) -> None:
-        if max_steps < 1:
-            raise ValueError("max_steps must be at least 1")
+        if type(max_steps) is not int or max_steps < 1:
+            raise ValueError("max_steps 必须是真正的正整数")
+        if type(duplicate_guard) is not bool:
+            raise TypeError("duplicate_guard 必须是真正的 bool")
         self._decision_provider = decision_provider
         self._executor = executor
         self._max_steps = max_steps
+        self._duplicate_guard = duplicate_guard
 
     def run(self, question: str) -> RunResult:
         """运行一次问题处理流程，直到回答或明确停止。"""
 
+        if not isinstance(question, str) or not question.strip():
+            raise ValueError("question 必须是非空字符串")
         messages = [Message(role="user", content=question)]
         successful_results = []
         trace = []
+        model_calls = []
         seen_calls: set[str] = set()
+        seen_call_ids: set[str] = set()
 
         for step in range(1, self._max_steps + 1):
-            action = self._decision_provider.decide(messages)
+            try:
+                model_call = self._decision_provider.decide(messages)
+            except Exception as exc:  # Provider 未预期异常也不能击穿 Runtime。
+                model_call = ModelCallResult(
+                    failure=ProviderFailure(
+                        code=ProviderErrorCode.INTERNAL_ERROR,
+                        message=f"Provider 未捕获异常：{type(exc).__name__}",
+                        retryable=False,
+                    ),
+                    metadata=ModelCallMetadata(
+                        model="unknown",
+                        latency_ms=0,
+                        usage=ModelUsage(),
+                    ),
+                )
+            model_calls.append(model_call)
+            if model_call.failure is not None:
+                trace.append(
+                    TraceEvent(
+                        step=step,
+                        event="model_failure",
+                        data=model_call.model_dump(mode="json"),
+                    )
+                )
+                trace.append(
+                    TraceEvent(
+                        step=step,
+                        event="stop",
+                        data={"reason": StopReason.MODEL_FAILED},
+                    )
+                )
+                return RunResult(
+                    answer=None,
+                    stop_reason=StopReason.MODEL_FAILED,
+                    steps=step,
+                    messages=messages,
+                    successful_tool_results=successful_results,
+                    trace=trace,
+                    model_calls=model_calls,
+                )
+
+            action = model_call.action
+            assert action is not None
             trace.append(
                 TraceEvent(
                     step=step,
                     event="model_action",
-                    data=action.model_dump(mode="json"),
+                    data=model_call.model_dump(mode="json"),
                 )
             )
 
@@ -70,9 +124,39 @@ class AgentRuntime:
                     messages=messages,
                     successful_tool_results=successful_results,
                     trace=trace,
+                    model_calls=model_calls,
                 )
 
             assert action.tool_call is not None
+            if action.tool_call.call_id in seen_call_ids:
+                trace.append(
+                    TraceEvent(
+                        step=step,
+                        event="model_failure",
+                        data={
+                            "code": ProviderErrorCode.INVALID_RESPONSE,
+                            "message": "模型重复使用了 tool_call_id",
+                            "call_id": action.tool_call.call_id,
+                        },
+                    )
+                )
+                trace.append(
+                    TraceEvent(
+                        step=step,
+                        event="stop",
+                        data={"reason": StopReason.MODEL_FAILED},
+                    )
+                )
+                return RunResult(
+                    answer=None,
+                    stop_reason=StopReason.MODEL_FAILED,
+                    steps=step,
+                    messages=messages,
+                    successful_tool_results=successful_results,
+                    trace=trace,
+                    model_calls=model_calls,
+                )
+            seen_call_ids.add(action.tool_call.call_id)
             signature = json.dumps(
                 {
                     "name": action.tool_call.name,
@@ -81,7 +165,7 @@ class AgentRuntime:
                 sort_keys=True,
                 ensure_ascii=False,
             )
-            if signature in seen_calls:
+            if self._duplicate_guard and signature in seen_calls:
                 trace.append(
                     TraceEvent(
                         step=step,
@@ -96,6 +180,7 @@ class AgentRuntime:
                     messages=messages,
                     successful_tool_results=successful_results,
                     trace=trace,
+                    model_calls=model_calls,
                 )
             seen_calls.add(signature)
             result = self._executor.execute(action.tool_call)
@@ -109,7 +194,8 @@ class AgentRuntime:
             messages.append(
                 Message(
                     role="assistant",
-                    content=f"Call tool {action.tool_call.name}",
+                    content=action.assistant_content,
+                    tool_call=action.tool_call,
                 )
             )
             messages.append(
@@ -135,6 +221,7 @@ class AgentRuntime:
                     messages=messages,
                     successful_tool_results=successful_results,
                     trace=trace,
+                    model_calls=model_calls,
                 )
 
             successful_results.append(result)
@@ -153,4 +240,5 @@ class AgentRuntime:
             messages=messages,
             successful_tool_results=successful_results,
             trace=trace,
+            model_calls=model_calls,
         )

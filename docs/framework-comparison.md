@@ -16,6 +16,11 @@
 学习顺序固定为原生 → LangChain → LangGraph。框架版本只改变表达方式，工具权限、
 校验、错误边界、重试上限和成功证据规则仍由 Kaiji 负责。
 
+横向审查的责任结论：LangChain 的 `StructuredTool` 不会替 Kaiji 校验返回值、证据归属
+或 `tool_call_id` 生命周期；LangGraph 的 State/Checkpointer 不会自动保证状态版本、
+严格审批类型、线程身份、停止原因与证据一致。原生 Runtime 显式承担这些边界，框架路径
+必须在 Adapter、Node 和恢复入口分别补回，不能把“框架能运行”当成可靠性契约。
+
 ## 本课程的对照边界
 
 - `to_langchain_messages()` 只比较角色、正文和工具结果的对应关系，是有损映射；Kaiji

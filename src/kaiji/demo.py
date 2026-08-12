@@ -7,7 +7,13 @@ from decimal import Decimal
 
 from pydantic import BaseModel, Field
 
-from kaiji.models import Message, ModelAction, ToolCall
+from kaiji.models import (
+    Message,
+    ModelAction,
+    ModelCallMetadata,
+    ModelCallResult,
+    ToolCall,
+)
 from kaiji.runtime import AgentRuntime
 from kaiji.tools import ToolDefinition, ToolExecutor, ToolRegistry
 
@@ -15,8 +21,12 @@ from kaiji.tools import ToolDefinition, ToolExecutor, ToolRegistry
 class DiscountArgs(BaseModel):
     """折扣计算工具的输入参数。"""
 
-    price: Decimal = Field(gt=0)
-    percent: Decimal = Field(ge=0, le=100)
+    price: Decimal = Field(gt=0, description="折扣前的原价，必须大于零。")
+    percent: Decimal = Field(
+        ge=0,
+        le=100,
+        description="从原价中减免的百分比；九折表示减免 10，而不是 90。",
+    )
 
 
 class DiscountResult(BaseModel):
@@ -56,11 +66,14 @@ class ScriptedDecisionProvider:
     def __init__(self, actions: list[ModelAction]) -> None:
         self._actions = deque(actions)
 
-    def decide(self, messages: list[Message]) -> ModelAction:
+    def decide(self, messages: list[Message]) -> ModelCallResult:
         """忽略消息内容，按预设顺序返回下一项模型动作。"""
 
         del messages
-        return self._actions.popleft()
+        return ModelCallResult(
+            action=self._actions.popleft(),
+            metadata=ModelCallMetadata(model="scripted", latency_ms=0),
+        )
 
 
 def build_registry() -> ToolRegistry:
@@ -70,7 +83,7 @@ def build_registry() -> ToolRegistry:
     registry.register(
         ToolDefinition(
             name="calculate_discount",
-            description="根据原价和折扣百分比计算最终价格。",
+            description="根据原价和减免百分比计算最终价格。",
             arguments_model=DiscountArgs,
             result_model=DiscountResult,
             handler=lambda args: {
@@ -81,7 +94,9 @@ def build_registry() -> ToolRegistry:
     registry.register(
         ToolDefinition(
             name="local_search",
-            description="搜索一个极小的本地知识库。",
+            description=(
+                "搜索演示用的极小本地关键词知识库；结果没有稳定证据编号，不能作为引用。"
+            ),
             arguments_model=SearchArgs,
             result_model=SearchResult,
             handler=lambda args: {
