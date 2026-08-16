@@ -70,7 +70,8 @@ class EvalObservation(BaseModel):
       第一次工具选择。``arguments_correct`` 只评价这次选择的参数，不评价
       后续恢复调用。
     - ``retry_recovered`` 表示 Executor retry 或 query rewrite 之后最终恢复到
-      预期结果；不适用时为 ``None``。
+      预期结果；Provider 的 transport retry 属于请求可靠性，不计入该业务指标；
+      不适用时为 ``None``。
     - ``steps`` 是状态机消耗的逻辑迭代：Native 使用 ``RunResult.steps``，
       检索图使用 ``step_count``，不经过检索的终止流程也至少记 1 步。
     - ``latency_ms`` 从 runner 开始执行该 case 到产生终止结果，采用墙钟时间。

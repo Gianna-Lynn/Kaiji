@@ -6,6 +6,7 @@ import json
 
 import httpx
 import pytest
+from pydantic import ValidationError
 
 from kaiji.demo import build_registry
 from kaiji.models import (
@@ -336,6 +337,104 @@ def test_todo_13b_message_conversion_preserves_tool_call_id() -> None:
     assert tool_json["tool_call_id"] == "call-course"
 
 
+@pytest.mark.parametrize(
+    "history",
+    [
+        [
+            Message(role="tool", content="{}", tool_result=ToolResult(
+                call_id="orphan", tool_name="calculate_discount", ok=True,
+                attempts=1, output={"final_price": 90},
+            )),
+        ],
+        [
+            Message(role="assistant", content="", tool_call=ToolCall(
+                call_id="missing", name="calculate_discount",
+                arguments={"price": 100, "percent": 10},
+            )),
+        ],
+        [
+            Message(role="assistant", content="", tool_call=ToolCall(
+                call_id="expected", name="calculate_discount",
+                arguments={"price": 100, "percent": 10},
+            )),
+            Message(role="tool", content="{}", tool_result=ToolResult(
+                call_id="other", tool_name="calculate_discount", ok=True,
+                attempts=1, output={"final_price": 90},
+            )),
+        ],
+        [
+            Message(role="assistant", content="", tool_call=ToolCall(
+                call_id="same-id", name="calculate_discount",
+                arguments={"price": 100, "percent": 10},
+            )),
+            Message(role="tool", content="{}", tool_result=ToolResult(
+                call_id="same-id", tool_name="search_azusa", ok=True,
+                attempts=1, output={"items": []},
+            )),
+        ],
+        [
+            Message(role="assistant", content="", tool_call=ToolCall(
+                call_id="ordered", name="calculate_discount",
+                arguments={"price": 100, "percent": 10},
+            )),
+            Message(role="user", content="插入的消息"),
+            Message(role="tool", content="{}", tool_result=ToolResult(
+                call_id="ordered", tool_name="calculate_discount", ok=True,
+                attempts=1, output={"final_price": 90},
+            )),
+        ],
+        [
+            Message(role="assistant", content="", tool_call=ToolCall(
+                call_id="double-result", name="calculate_discount",
+                arguments={"price": 100, "percent": 10},
+            )),
+            Message(role="tool", content="{}", tool_result=ToolResult(
+                call_id="double-result", tool_name="calculate_discount", ok=True,
+                attempts=1, output={"final_price": 90},
+            )),
+            Message(role="tool", content="{}", tool_result=ToolResult(
+                call_id="extra-result", tool_name="calculate_discount", ok=True,
+                attempts=1, output={"final_price": 90},
+            )),
+        ],
+    ],
+    ids=[
+        "orphan_tool", "missing_result", "mismatched_id", "mismatched_tool_name",
+        "invalid_order", "extra_tool_result",
+    ],
+)
+def test_todo_13b_rejects_unpaired_or_misordered_tool_history(history: list[Message]) -> None:
+    """完整历史必须按 assistant tool_call -> 同 ID tool result 严格相邻配对。"""
+
+    provider = OpenAICompatibleProvider(_config(), build_registry())
+
+    with pytest.raises(ValueError, match="tool|assistant"):
+        provider._convert_messages(history)
+
+
+def test_todo_13b_rejects_reused_call_id_in_complete_history() -> None:
+    """同一历史复用调用 ID 会使后续结果无法可靠归属，因此在发送前拒绝。"""
+
+    call = ToolCall(
+        call_id="reused", name="calculate_discount",
+        arguments={"price": 100, "percent": 10},
+    )
+    result = ToolResult(
+        call_id="reused", tool_name="calculate_discount", ok=True,
+        attempts=1, output={"final_price": 90},
+    )
+    history = [
+        Message(role="assistant", content="", tool_call=call),
+        Message(role="tool", content="{}", tool_result=result),
+        Message(role="assistant", content="", tool_call=call),
+        Message(role="tool", content="{}", tool_result=result),
+    ]
+    provider = OpenAICompatibleProvider(_config(), build_registry())
+
+    with pytest.raises(ValueError, match="复用"):
+        provider._convert_messages(history)
+
+
 def test_todo_13c_parse_action_isolated_from_http() -> None:
     """13c 直接解析已校验响应，不依赖请求或环境变量。"""
 
@@ -367,6 +466,116 @@ def test_todo_13c_parse_action_isolated_from_http() -> None:
 
     assert action.tool_call is not None
     assert action.tool_call.call_id == "call-13c"
+
+
+@pytest.mark.parametrize(
+    ("message", "finish_reason"),
+    [
+        ({"role": "assistant", "content": "   \t"}, "stop"),
+        ({"role": "assistant", "content": "答案"}, "tool_calls"),
+        (
+            {
+                "role": "assistant",
+                "content": None,
+                "tool_calls": [{
+                    "id": "call-finish",
+                    "type": "function",
+                    "function": {"name": "calculate_discount", "arguments": "{}"},
+                }],
+            },
+            "stop",
+        ),
+    ],
+    ids=["blank_final_text", "final_with_tool_finish_reason", "tool_with_stop_finish_reason"],
+)
+def test_todo_13c_rejects_blank_text_and_inconsistent_finish_reason(
+    message: dict, finish_reason: str
+) -> None:
+    """最终文本必须非空白，finish_reason 必须和动作路径匹配。"""
+
+    response = _ChatResponse.model_validate(
+        {"choices": [{"message": message, "finish_reason": finish_reason}]}
+    )
+    with pytest.raises(ValueError):
+        OpenAICompatibleProvider._parse_action(response)
+
+
+@pytest.mark.parametrize(
+    "payload",
+    [
+        {
+            "object": "chat.completion",
+            "created": 1710000000,
+            "system_fingerprint": "fp-test",
+            "choices": [{
+                "index": 0,
+                "logprobs": None,
+                "message": {"role": "assistant", "content": "答案", "refusal": None},
+            }],
+        },
+        {
+            "choices": [{
+                "message": {"role": "assistant", "content": "答案", "provider_extra": 1},
+                "choice_extra": True,
+            }],
+            "provider_extra": {"trace": "opaque"},
+        },
+    ],
+    ids=["common_openai_extensions", "nested_extensions"],
+)
+def test_todo_13c_allows_unknown_extensions_without_changing_action(payload: dict) -> None:
+    """未消费的兼容扩展字段可忽略，但不能改变关键动作语义。"""
+
+    response = _ChatResponse.model_validate(payload)
+    action = OpenAICompatibleProvider._parse_action(response)
+
+    assert action.final_answer == "答案"
+
+
+@pytest.mark.parametrize("total_tokens", ["3", True])
+def test_todo_13c_rejects_coercible_protocol_field_types(total_tokens: object) -> None:
+    """响应计数不接受字符串或布尔值的隐式类型转换。"""
+
+    with pytest.raises(ValidationError):
+        _ChatResponse.model_validate(
+            {
+                "choices": [{"message": {"role": "assistant", "content": "答案"}}],
+                "usage": {
+                    "prompt_tokens": 2,
+                    "completion_tokens": 1,
+                    "total_tokens": total_tokens,
+                },
+            }
+        )
+
+
+@pytest.mark.parametrize("arguments", ['{"value": NaN}', '{"value": Infinity}'])
+def test_todo_13c_rejects_nonfinite_tool_arguments(
+    arguments: str
+) -> None:
+    """工具参数中的 NaN/Infinity 不能穿过 JSON 协议边界。"""
+
+    response = _ChatResponse.model_validate(
+        {
+            "choices": [{
+                "message": {
+                    "role": "assistant",
+                    "content": None,
+                    "tool_calls": [{
+                        "id": "call-nonfinite",
+                        "type": "function",
+                        "function": {
+                            "name": "calculate_discount",
+                            "arguments": arguments,
+                        },
+                    }],
+                },
+                "finish_reason": "tool_calls",
+            }],
+        }
+    )
+    with pytest.raises(ValueError):
+        OpenAICompatibleProvider._parse_action(response)
 
 
 def test_todo_13d_decide_isolated_from_payload_and_action(monkeypatch) -> None:

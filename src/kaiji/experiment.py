@@ -5,10 +5,12 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import math
+import numbers
 from pathlib import Path
 from typing import Any
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, StrictInt, field_validator, model_validator
 
 from kaiji.adapters.azusa import AzusaHttpAdapter, ChunkResponse, MockAzusaAdapter
 from kaiji.azusa_tools import build_azusa_registry
@@ -35,12 +37,37 @@ class ExperimentConfig(BaseModel):
     provider: str = Field(default="scripted", min_length=1)
     harness: HarnessVariant = HarnessVariant.FULL_KAIJI
     suite: str = Field(min_length=1)
-    repeats: int = Field(default=1, ge=1)
+    repeats: StrictInt = Field(default=1, ge=1)
     model: str = "scripted"
     temperature: float = 0.0
-    max_steps: int = Field(default=4, ge=1)
-    input_cost_per_million: float = Field(default=0.0, ge=0)
-    output_cost_per_million: float = Field(default=0.0, ge=0)
+    max_steps: StrictInt = Field(default=4, ge=1)
+    input_cost_per_million: float = Field(default=0.0, ge=0, allow_inf_nan=False)
+    output_cost_per_million: float = Field(default=0.0, ge=0, allow_inf_nan=False)
+
+    @field_validator("repeats", "max_steps", mode="before")
+    @classmethod
+    def reject_bool_integer_boundaries(cls, value: object) -> object:
+        """矩阵和运行安全边界不得接受 bool 或数字字符串。"""
+
+        if type(value) is bool:
+            raise ValueError("Experiment 整数配置不得为 bool")
+        return value
+
+    @field_validator(
+        "temperature",
+        "input_cost_per_million",
+        "output_cost_per_million",
+        mode="before",
+    )
+    @classmethod
+    def require_finite_numeric_boundaries(cls, value: object) -> object:
+        """成本与温度必须是有限的真实数值，拒绝 bool 和字符串强制转换。"""
+
+        if type(value) is bool or not isinstance(value, numbers.Real):
+            raise ValueError("Experiment 数值配置必须是有限数值且不得为 bool")
+        if not math.isfinite(float(value)):
+            raise ValueError("Experiment 数值配置必须是有限数值")
+        return value
 
 
 class ExperimentReport(BaseModel):
@@ -57,6 +84,16 @@ class ExperimentReport(BaseModel):
     aggregate: AgentAggregateReport
     bad_case_run_ids: list[str]
     scenario_distribution: dict[str, int]
+
+    @model_validator(mode="after")
+    def require_complete_formal_report(self) -> "ExperimentReport":
+        """普通 Experiment 只有完整成功矩阵才产出正式报告。"""
+
+        if not self.complete:
+            raise ValueError("普通 Experiment 失败不产出 incomplete 正式报告")
+        if self.actual_episode_count != self.expected_episode_count:
+            raise ValueError("正式 Experiment 报告的 Episode 数量必须完整")
+        return self
 
 
 class AblationReport(BaseModel):

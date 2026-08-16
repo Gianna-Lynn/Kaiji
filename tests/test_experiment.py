@@ -1,6 +1,7 @@
 """验证实验产物完整性、唯一性、数据指纹和 Bad Case。"""
 
 import json
+import math
 from pathlib import Path
 
 import pytest
@@ -67,6 +68,68 @@ def test_todo_15b_experiment_writes_complete_reproducible_artifacts(tmp_path) ->
     assert (target / "report.json").exists()
     assert (target / "report.md").exists()
     assert json.loads((target / "bad_cases.json").read_text(encoding="utf-8")) == []
+
+
+def test_todo_15b_failed_experiment_writes_no_formal_report(tmp_path) -> None:
+    """普通 Experiment 失败不返回 incomplete，也不留下正式产物目录。"""
+
+    class FailingRunner:
+        def run(self, case, *, repeat_index=0):
+            raise RuntimeError("受控 Provider 失败")
+
+    with pytest.raises(RuntimeError, match="受控 Provider 失败"):
+        ExperimentRunner(ExperimentConfig(suite="smoke"), FailingRunner()).run(
+            _cases(), tmp_path
+        )
+    assert not list(tmp_path.iterdir())
+
+
+@pytest.mark.parametrize(
+    "field,value",
+    [
+        ("repeats", True),
+        ("repeats", "2"),
+        ("max_steps", True),
+        ("max_steps", "4"),
+        ("temperature", True),
+        ("temperature", math.inf),
+        ("input_cost_per_million", "0.1"),
+        ("output_cost_per_million", math.nan),
+    ],
+)
+def test_todo_15b_experiment_config_rejects_unsafe_numeric_boundaries(
+    field, value
+) -> None:
+    payload = {"suite": "smoke", field: value}
+    with pytest.raises(ValueError):
+        ExperimentConfig.model_validate(payload)
+
+
+def test_todo_15b_write_failure_cleans_staging_and_preserves_existing_directory(
+    tmp_path, monkeypatch
+) -> None:
+    """产物阶段失败时清理临时目录，但不得碰已有实验目录。"""
+
+    existing = tmp_path / "existing-run"
+    existing.mkdir()
+    marker = existing / "keep.txt"
+    marker.write_text("keep", encoding="utf-8")
+    original_write_text = Path.write_text
+
+    def fail_report_write(path, data, *args, **kwargs):
+        if path.name == "report.json":
+            raise OSError("受控 report 写入失败")
+        return original_write_text(path, data, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "write_text", fail_report_write)
+    with pytest.raises(OSError, match="report 写入失败"):
+        ExperimentRunner(
+            ExperimentConfig(suite="smoke"),
+            build_scripted_runner(_CompletedHarness()),
+        ).run(_cases(), tmp_path)
+
+    assert marker.read_text(encoding="utf-8") == "keep"
+    assert list(tmp_path.iterdir()) == [existing]
 
 
 def test_loader_rejects_duplicate_case_ids(tmp_path) -> None:

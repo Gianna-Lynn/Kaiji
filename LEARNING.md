@@ -747,11 +747,19 @@ runner 必须按下表把运行事实统一映射为 Observation，不能到写�
 | `arguments_correct` | 上述选择的参数是否满足本 case 预期；case 不要求工具时为 `None` |
 | `tool_calls` | 实际进入工具 handler 的执行尝试数；可累加 `ToolResult.attempts`，参数预校验失败可为 0 |
 | `successful_tool_calls` | 上述执行尝试中产生校验后成功结果的次数 |
-| `retry_recovered` | 先发生可恢复失败，随后经 Executor retry 或 query rewrite 最终恢复；不适用为 `None` |
+| `retry_recovered` | 先发生可恢复失败，随后经 Executor retry 或 query rewrite 最终恢复；Provider transport retry 不计入；不适用为 `None` |
 | `unnecessary_tool_calls` | 按 case 契约判断本可省略的实际执行尝试数 |
 | `steps` | 状态机消耗的逻辑迭代；Native 用 `RunResult.steps`，检索图用 `step_count`，非检索终止至少为 1 |
 | `latency_ms` | runner 接受 case 到得到终止结果的墙钟毫秒，包含 Adapter 和内部重试时间 |
 | `citation_supported` | 所有引用均来自成功且校验过的证据，并实际支持回答；不适用为 `None` |
+
+TODO14 的 `required_answer_facts` 使用 NFKC、大小写折叠和连续空白折叠后的连续
+字面量匹配；事实两端的 ASCII 字母、数字或下划线不能与回答中的同类 ASCII 字符
+相邻，因此 `90` 不匹配 `190`；CJK 字符不参与该西文标识边界。它不做语义蕴含、
+否定识别、同义词、翻译或数值等价判断。
+Native TODO14 的 `retry_recovered` 只观察 `ToolResult.attempts` 统计 Executor
+retry；TODO11 的 query rewrite 读取自己的 `retry_count`/`step_count`，Provider
+transport retry 不计入该业务指标。
 
 因此 `selected_tool` 非空而 `tool_calls=0` 并不矛盾：模型可能选了工具，但参数 Schema
 在 handler 前拒绝了它。`tool_calls` 不是 Message 数，也不是模型 action 数。

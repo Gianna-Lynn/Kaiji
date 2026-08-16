@@ -38,8 +38,11 @@ python -m pytest tests/test_openai_compatible_provider.py -k todo_13a
 
 - user 和普通 assistant 保留文本；
 - assistant tool call 保留 `call_id`、工具名、稳定 JSON 参数与可选文本；
-- tool 结果必须使用同一个 `tool_call_id`；
-- 每个 assistant 回合只表达一个工具调用。
+- 完整历史中 assistant 工具调用后必须紧跟一个同 `tool_call_id`、同工具名的
+  tool 结果；孤立 tool、缺失 result、ID/工具名 mismatch 或插入其他角色必须在
+  发送前拒绝；同一历史不得复用 `tool_call_id`；
+- 每个 assistant 回合只表达一个工具调用。这个边界是本题确定的协议，不要求处理
+  并行工具调用或把一个结果延迟到后续回合。
 
 ```powershell
 python -m pytest tests/test_openai_compatible_provider.py -k todo_13b
@@ -48,9 +51,14 @@ python -m pytest tests/test_openai_compatible_provider.py -k todo_13b
 ### 13c 响应解析
 
 - 必须恰好一个 assistant choice；
-- 工具路径只能有一个 `function` call，参数必须是 JSON 对象；
-- `finish_reason` 必须与工具或最终回答路径一致；
-- 非工具路径必须包含非空最终文本。
+- 工具路径只能有一个 `function` call，参数必须是有限 JSON 对象（拒绝 `NaN`、
+  `Infinity` 等非有限常量）；
+- `finish_reason` 必须与工具或最终回答路径一致：工具路径只接受 `tool_calls` 或
+  兼容服务省略该字段，最终回答只接受 `stop` 或省略该字段；
+- 非工具路径必须包含至少一个非空白字符的最终文本；
+- 响应外壳中会被 Kaiji 消费的关键字段使用严格类型；未消费的兼容扩展字段允许
+  忽略（例如 `object`、`created`、`system_fingerprint`、`index`、`logprobs`），
+  不把字符串/布尔值隐式转换为计数或文本，也不得让扩展字段改变关键动作语义。
 
 ```powershell
 python -m pytest tests/test_openai_compatible_provider.py -k todo_13c
@@ -88,10 +96,21 @@ python -m pytest tests/test_eval_runner.py
 ### 14b 单条确定性评分
 
 - 工具选择取第一次模型工具动作；参数使用 JSON 子集语义；
-- 最终回答必须包含所有要求事实；
+- 最终回答必须包含所有要求事实。事实匹配先做 Unicode NFKC、大小写折叠和连续
+  空白折叠，再做连续字面量匹配；事实两端若是 ASCII 字母、数字或下划线，不得与
+  回答中的同类 ASCII 字符相邻（所以 `90` 不匹配 `190`）；CJK 字符不参与该边界。
+  这不是语义蕴含、否定识别、同义词、
+  翻译或数值等价评测；题目应提供可字面检查的短事实；
 - 引用只在“实际引用 ∩ 允许 ID ∩ 成功证据 ID”中受支持；metadata 同名字段不算证据；
 - stop、工具、参数、事实、引用、恢复均进入 `task_success` 和失败分类；
 - Token 未报告时按零保存，不能丢掉该 Episode。
+
+`retry_recovered` 的口径与 TODO11 对齐：Executor retry 或 LangGraph query rewrite
+最终成功才算恢复。TODO14 的 Native `RunResult` 只能观察 `ToolResult.attempts`，
+因此只统计同一工具调用内的 Executor retry；query rewrite 仍由 TODO11 的
+`retry_count`/`step_count` 记录，不能从消息数量推断。Provider transport retry
+属于传输可靠性，不计入该业务恢复指标；Provider 的 `prior_attempt_failures`
+不能单独让 Episode 通过。
 
 ```powershell
 python -m pytest tests/test_eval_scorer.py -k todo_14b
@@ -149,6 +168,10 @@ python -m pytest tests/test_harnesses.py
 - 冻结数据与配置 hash，记录模型、温度、Harness、Suite、Token、成本和延迟；
 - 写 `episodes.jsonl`、`report.json`、`report.md`、`bad_cases.json`；
 - 已有实验目录不得覆盖；部分矩阵不得标为 complete 或生成聚合成绩。
+- 普通 `ExperimentRunner` 选择“失败不产出正式 report”语义：Provider、评分、身份
+  校验或产物写入异常直接失败，不返回 `incomplete` 报告；需要部分产物与断点续跑时
+  使用 15d Formal Runner。产物应先写同目录临时目录，全部成功后再改名，失败不得
+  留下可被误读为正式成绩的目录。
 
 ```powershell
 python -m pytest tests/test_experiment.py -k todo_15b
@@ -170,9 +193,18 @@ python -m pytest tests/test_experiment.py -k todo_15c
 - 每条 Episode 立即追加到 hash 链 JSONL，并 flush、fsync；
 - `(case_id, repeat_index)` 是唯一矩阵坐标，恢复只能跳过，不能重复消费；
 - 每次真实请求先记 started，响应后记 Token；未决请求必须阻断自动恢复；
+- 完整报告必须满足 `requests_started == responses_finished`，且真实 Provider 的
+  `requests_started` 等于已完成 Episode 的模型回合数加 `prior_attempt_failures`；
+  模型重试各占一次请求预算。Scripted/Mock Preflight 不发网络请求，账本请求数固定
+  为 0，不能拿替身回合数冒充真实请求；
+- `FormalRunReport` 模型只校验结构关系，允许 `expected_request_count=0` 表示离线替身；
+  real-provider 语义必须由带 `FormalRunConfig.provider` 的 `_report` 绑定，不能仅凭
+  模型字段宣称真实请求账本成立；
 - 数据、配置、hash 链、坐标、run ID 变化均拒绝恢复；
 - 中断与预算停止写 incomplete 报告，完整矩阵才允许 Aggregate；
 - 离线重评分默认只读，显式迁移前先保存旧报告。
+- hash 链没有密钥签名或可信外部锚点，只能检测未被重新计算的损坏，不能证明真实性
+  或作者身份。
 
 ```powershell
 python -m pytest tests/test_formal_runner.py -k todo_15d

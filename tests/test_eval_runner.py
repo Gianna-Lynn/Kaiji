@@ -55,7 +55,7 @@ def test_todo_14a_runner_executes_runtime_and_preserves_raw_result() -> None:
     assert len(episode.result.model_calls) == 2
 
 
-def test_runner_calls_factories_for_each_case_without_state_leak() -> None:
+def test_todo_14a_runner_calls_factories_for_each_case_without_state_leak() -> None:
     """共享 Runner 不得复用已消费 Provider 或有状态 Executor。"""
 
     created: list[str] = []
@@ -105,7 +105,7 @@ def test_case_contract_rejects_ambiguous_or_unscorable_values(updates) -> None:
 
 
 @pytest.mark.parametrize("bad", [True, -1, "1"])
-def test_runner_repeat_index_is_a_strict_nonnegative_integer(bad) -> None:
+def test_todo_14a_runner_repeat_index_is_a_strict_nonnegative_integer(bad) -> None:
     runner = AgentEvalRunner(
         lambda case: ScriptedDecisionProvider(
             [ModelAction(kind="final_answer", final_answer="结果是 90。")]

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import re
+import unicodedata
 from typing import Any
 
 from pydantic import BaseModel, Field
@@ -69,6 +70,54 @@ def _contains_subset(actual: Any, expected: Any) -> bool:
     return actual == expected
 
 
+def _normalize_fact_text(value: str) -> str:
+    """按固定 Unicode 规则规范化事实文本，不进行语义改写。"""
+
+    return " ".join(unicodedata.normalize("NFKC", value).casefold().split())
+
+
+def _contains_answer_fact(answer: str, fact: str) -> bool:
+    """判断回答是否包含事实字面量，并避免字母数字片段误匹配。
+
+    事实匹配是 NFKC、大小写折叠和空白折叠后的连续字面量匹配；若事实两端
+    是 ASCII 字母、数字或下划线，则相邻同类 ASCII 字符不会被当作边界。
+    CJK 字符不参与这个西文标识边界，因此 ``Kaiji使用工具`` 可以匹配
+    ``使用工具``。该规则能拒绝 ``90`` 匹配 ``190``，但不尝试自然语言蕴含、
+    否定识别、同义词或数值等价判断。
+    """
+
+    normalized_answer = _normalize_fact_text(answer)
+    normalized_fact = _normalize_fact_text(fact)
+    if not normalized_fact:
+        return False
+
+    def is_ascii_word_character(value: str) -> bool:
+        return (
+            value == "_"
+            or "A" <= value <= "Z"
+            or "a" <= value <= "z"
+            or ("0" <= value <= "9")
+        )
+
+    start = 0
+    while True:
+        position = normalized_answer.find(normalized_fact, start)
+        if position < 0:
+            return False
+        end = position + len(normalized_fact)
+        left_ok = position == 0 or not (
+            is_ascii_word_character(normalized_fact[0])
+            and is_ascii_word_character(normalized_answer[position - 1])
+        )
+        right_ok = end == len(normalized_answer) or not (
+            is_ascii_word_character(normalized_fact[-1])
+            and is_ascii_word_character(normalized_answer[end])
+        )
+        if left_ok and right_ok:
+            return True
+        start = position + 1
+
+
 def _extract_citations(answer: str | None) -> list[str]:
     """提取 ``Citations:`` 行和方括号引用，保持首次出现顺序。"""
 
@@ -121,8 +170,11 @@ def _token_totals(episode: AgentEpisode) -> tuple[int, int, int]:
 def score_episode(case: AgentEvalCase, episode: AgentEpisode) -> AgentScore:
     """从原始 RunResult 独立计算单条成绩和失败类别。"""
     # TODO 14b（L2）：只从原始 RunResult、case 期望与成功证据计算成绩。
-    # 参数使用 JSON 子集语义；引用必须同时属于实际引用、允许集合和成功证据；
-    # 不接受 Runner 自报成功。逐项失败类别和 Token 也必须保留。
+    # 参数使用 JSON 子集语义；事实使用 _contains_answer_fact 的确定性字面量
+    # 规则；引用必须同时属于实际引用、允许集合和成功证据；不接受 Runner 自报
+    # 成功。逐项失败类别和 Token 也必须保留。retry_recovered 只认 Executor
+    # 的 ToolResult.attempts>1；TODO11 query rewrite 有独立状态字段，Provider
+    # transport retry 不是此业务指标。
     raise NotImplementedError("TODO 14b：确定性评分单条 Episode")
 
 

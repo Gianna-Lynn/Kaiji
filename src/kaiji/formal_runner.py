@@ -5,6 +5,8 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import math
+import numbers
 import os
 from collections import Counter
 from pathlib import Path
@@ -19,6 +21,7 @@ from pydantic import (
     StrictBool,
     StrictInt,
     field_validator,
+    model_validator,
 )
 
 from kaiji.eval_runner import AgentEpisode, AgentEvalCase, AgentEvalRunner
@@ -91,10 +94,12 @@ class FormalRunConfig(BaseModel):
     )
     @classmethod
     def reject_bool_float_boundaries(cls, value: object) -> object:
-        """浮点配置允许整数写法，但不得接受 bool 冒充数值。"""
+        """浮点配置允许整数写法，但不得接受 bool、字符串或非有限数值。"""
 
-        if type(value) is bool:
-            raise ValueError("Formal 数值配置不得为 bool")
+        if type(value) is bool or not isinstance(value, numbers.Real):
+            raise ValueError("Formal 数值配置必须是数值且不得为 bool")
+        if not math.isfinite(float(value)):
+            raise ValueError("Formal 数值配置必须是有限数值")
         return value
 
     @field_validator("base_url")
@@ -163,6 +168,8 @@ class PersistentRequestLedger:
     def record_finished(self, result: ModelCallResult) -> None:
         """响应返回后累计已报告 Token；未知用量不伪造。"""
 
+        if self.state.responses_finished >= self.state.requests_started:
+            raise ValueError("请求账本损坏：没有对应 started 的待完成请求")
         self.state.responses_finished += 1
         usage = result.metadata.usage
         self.state.input_tokens += usage.input_tokens or 0
@@ -184,7 +191,11 @@ class PersistentRequestLedger:
 
 
 class FormalEpisodeRecord(BaseModel):
-    """用前向 hash 串联一次已完成 Episode 及其矩阵坐标。"""
+    """用前向 hash 串联一次已完成 Episode 及其矩阵坐标。
+
+    该链只提供篡改检测：没有密钥签名或可信外部锚点，能够修改文件的攻击者也能
+    重新计算整条链，因此不能把 ``record_hash`` 当成真实性或作者身份证明。
+    """
 
     model_config = ConfigDict(extra="forbid")
 
@@ -197,7 +208,13 @@ class FormalEpisodeRecord(BaseModel):
 
 
 class FormalRunReport(BaseModel):
-    """部分运行不生成聚合成绩；只有完整矩阵才携带 Aggregate。"""
+    """保存 Formal 状态；Provider 计数语义由带配置的 ``_report`` 绑定。
+
+    模型层只能校验结构关系：``expected_request_count=0`` 合法地表示
+    Scripted/Mock Preflight 未发送真实请求。因此不能单独把该模型当作 real provider
+    账本证明；真实 Provider 必须由 ``ResumableFormalRunner._report`` 根据
+    ``FormalRunConfig.provider`` 将 expected count 绑定到模型回合与 prior retry。
+    """
 
     experiment_id: str
     model_config = ConfigDict(extra="forbid")
@@ -208,6 +225,8 @@ class FormalRunReport(BaseModel):
     actual_episode_count: int
     requests_started: int
     responses_finished: int
+    model_request_count: int
+    expected_request_count: int
     estimated_cost_usd: float
     dataset_hash: str
     config_fingerprint: str
@@ -217,6 +236,27 @@ class FormalRunReport(BaseModel):
     aggregate: AgentAggregateReport | None = None
     bad_case_run_ids: list[str] = Field(default_factory=list)
     scenario_distribution: dict[str, int]
+
+    @model_validator(mode="after")
+    def complete_report_has_ledger_invariant(self) -> "FormalRunReport":
+        """完整报告必须无未决请求，并满足模型回合/重试与账本的计数关系。"""
+
+        if self.complete:
+            if self.actual_episode_count != self.expected_episode_count:
+                raise ValueError("Formal 完整报告的 Episode 数量不一致")
+            if self.aggregate is None:
+                raise ValueError("Formal 完整报告必须包含 aggregate")
+            if self.requests_started != self.responses_finished:
+                raise ValueError("Formal 完整报告存在未决请求")
+            if self.requests_started != self.expected_request_count:
+                raise ValueError(
+                    "Formal 完整报告的账本请求数必须等于模型请求数（含模型重试）"
+                )
+            if self.expected_request_count not in {0, self.model_request_count}:
+                raise ValueError("Formal 报告的请求计数口径与 Episode 不一致")
+        elif self.aggregate is not None:
+            raise ValueError("Formal incomplete 报告不得包含 aggregate")
+        return self
 
 
 class ResumableFormalRunner:
@@ -367,6 +407,16 @@ class ResumableFormalRunner:
             os.fsync(handle.fileno())
         records.append(record)
 
+    @staticmethod
+    def _expected_request_count(records: list[FormalEpisodeRecord]) -> int:
+        """从 Episode 计算 Provider 实际请求数：每个模型回合加其已记录重试。"""
+
+        return sum(
+            1 + len(model_call.prior_attempt_failures)
+            for record in records
+            for model_call in record.episode.result.model_calls
+        )
+
     def _report(
         self,
         records: list[FormalEpisodeRecord],
@@ -379,6 +429,13 @@ class ResumableFormalRunner:
         episodes = [record.episode for record in records]
         complete = len(records) == self.manifest.expected_episode_count
         aggregate = aggregate_scores(self.cases, episodes) if complete else None
+        model_request_count = self._expected_request_count(records)
+        offline_provider = self.config.provider in {
+            "mock",
+            "scripted",
+            "scripted_preflight",
+        }
+        expected_request_count = 0 if offline_provider else model_request_count
         bad_ids: list[str] = []
         scores = {}
         if complete:
@@ -406,6 +463,8 @@ class ResumableFormalRunner:
             actual_episode_count=len(records),
             requests_started=self.ledger.state.requests_started,
             responses_finished=self.ledger.state.responses_finished,
+            model_request_count=model_request_count,
+            expected_request_count=expected_request_count,
             estimated_cost_usd=self.ledger.estimated_cost(self.config),
             dataset_hash=self.manifest.dataset_hash,
             config_fingerprint=self.manifest.config_fingerprint,
