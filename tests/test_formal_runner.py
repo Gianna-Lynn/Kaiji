@@ -5,10 +5,12 @@ import json
 
 import pytest
 
-from kaiji.eval_runner import AgentEvalCase
+from kaiji.eval_runner import AgentEpisode, AgentEvalCase
 from kaiji.experiment import build_scripted_runner, load_agent_cases
 from kaiji.formal_runner import (
     FormalRunConfig,
+    FormalEpisodeRecord,
+    FormalRunReport,
     PersistentRequestLedger,
     ResumableFormalRunner,
     build_deepseek_behavior_runner,
@@ -21,6 +23,13 @@ from kaiji.models import (
     ModelCallMetadata,
     ModelCallResult,
     ModelUsage,
+    Message,
+    RunResult,
+    ProviderAttemptFailure,
+    ProviderErrorCode,
+    ProviderFailure,
+    StopReason,
+    TraceEvent,
 )
 from kaiji.real_pilot import BEHAVIOR_SYSTEM_PROMPT, build_behavior_registry
 
@@ -52,6 +61,35 @@ class _CompletedHarness:
 
 def _runner() -> object:
     return build_scripted_runner(_CompletedHarness())
+
+
+def _minimal_episode(case: AgentEvalCase, model_call: ModelCallResult) -> AgentEpisode:
+    """构造不依赖 TODO14a Runner 的最小完整 Episode。"""
+
+    result = RunResult(
+        answer="收到",
+        stop_reason=StopReason.COMPLETED,
+        steps=1,
+        messages=[Message(role="assistant", content="收到")],
+        successful_tool_results=[],
+        trace=[
+            TraceEvent(step=1, event="model_action", data={"kind": "final_answer"}),
+            TraceEvent(
+                step=1,
+                event="stop",
+                data={"reason": StopReason.COMPLETED.value},
+            ),
+        ],
+        model_calls=[model_call],
+    )
+    return AgentEpisode(
+        run_id=f"{case.case_id}-direct",
+        case_id=case.case_id,
+        suite=case.suite,
+        repeat_index=0,
+        latency_ms=1,
+        result=result,
+    )
 
 
 class InterruptAfterOne:
@@ -166,6 +204,130 @@ def test_resume_skips_completed_coordinates_and_finishes_matrix(tmp_path) -> Non
     assert final_lines[:2] == previous_lines
     assert len(final_lines) == 4
     assert json.loads((run_dir / "bad_cases.json").read_text(encoding="utf-8")) == []
+
+
+def test_todo_15d_complete_report_exposes_model_retry_request_accounting(
+    tmp_path,
+) -> None:
+    """离线替身不记真实请求，但报告仍暴露模型回合计数口径。"""
+
+    report = ResumableFormalRunner(_config(), _cases(), _runner(), tmp_path / "formal").run()
+
+    assert report.complete is True
+    assert report.requests_started == report.responses_finished == 0
+    assert report.expected_request_count == 0
+    records = [
+        FormalEpisodeRecord.model_validate_json(line).episode
+        for line in (tmp_path / "formal" / "episodes.jsonl")
+        .read_text(encoding="utf-8")
+        .splitlines()
+    ]
+    assert report.model_request_count == sum(
+        len(episode.result.model_calls) for episode in records
+    )
+
+
+def test_todo_15d_complete_report_rejects_ledger_count_mismatch(tmp_path) -> None:
+    report = ResumableFormalRunner(_config(), _cases(), _runner(), tmp_path / "formal").run()
+    payload = report.model_dump(mode="json")
+    payload["requests_started"] = 1
+    payload["responses_finished"] = 1
+    with pytest.raises(ValueError, match="账本请求数"):
+        FormalRunReport.model_validate(payload)
+
+
+def test_todo_15d_live_provider_counts_model_retries_in_ledger(
+    tmp_path, monkeypatch
+) -> None:
+    """真实 Provider 口径：模型回合数加 prior retry，少一或多一都拒绝。"""
+
+    case = _cases()[0]
+    config = _config(repeats=1).model_copy(update={"provider": "deepseek"})
+    formal = ResumableFormalRunner(config, [case], _runner(), tmp_path / "formal")
+    # 15d 直接测试只验证报告/账本边界；评分实现属于前置 TODO14b/14c，使用
+    # 最小替身避免前置 NotImplementedError 遮蔽当前题反馈。
+    monkeypatch.setattr(
+        "kaiji.formal_runner.aggregate_scores",
+        lambda cases, episodes: formal_report_aggregate(),
+    )
+    monkeypatch.setattr(
+        "kaiji.formal_runner.score_episode",
+        lambda case, episode: type("Score", (), {"task_success": True})(),
+    )
+    original_call = ModelCallResult(
+        action=ModelAction(kind="final_answer", final_answer="收到"),
+        metadata=ModelCallMetadata(model="deepseek", latency_ms=1),
+    )
+    prior_failure = ProviderAttemptFailure(
+        failure=ProviderFailure(
+            code=ProviderErrorCode.TRANSPORT_ERROR,
+            message="受控传输失败",
+            retryable=True,
+        ),
+        latency_ms=1,
+        request_id="prior-1",
+    )
+    retried_call = original_call.model_copy(
+        update={"prior_attempt_failures": [prior_failure]}
+    )
+    episode = _minimal_episode(case, retried_call)
+    records = []
+    formal._append(episode, records)
+    first_attempt = ModelCallResult(
+        failure=prior_failure.failure,
+        metadata=original_call.metadata,
+    )
+    final_attempt = retried_call.model_copy(update={"prior_attempt_failures": []})
+    formal.ledger.record_started()
+    formal.ledger.record_finished(first_attempt)
+    formal.ledger.record_started()
+    formal.ledger.record_finished(final_attempt)
+
+    report = formal._report(records, stop_reason=None, persist=False)
+    assert report.complete is True
+    assert report.model_request_count == 2
+    assert report.expected_request_count == 2
+    assert report.requests_started == report.responses_finished == 2
+
+    # 独立模型只知道 offline/live 期望计数，不能从 provider 身份推导 real 语义；
+    # 将其投影成离线报告仍是结构合法的，真正的 provider 约束由 _report 负责。
+    offline_projection = report.model_dump(mode="json")
+    offline_projection.update(
+        {"requests_started": 0, "responses_finished": 0, "expected_request_count": 0}
+    )
+    assert FormalRunReport.model_validate(offline_projection).expected_request_count == 0
+
+    for count in (1, 3):
+        formal.ledger.state.requests_started = count
+        formal.ledger.state.responses_finished = count
+        with pytest.raises(ValueError, match="账本请求数"):
+            formal._report(records, stop_reason=None, persist=False)
+
+
+def formal_report_aggregate():
+    """构造只供 15d 账本测试使用的聚合替身。"""
+
+    from kaiji.eval_scorer import AgentAggregateReport
+
+    return AgentAggregateReport(
+        episode_count=1,
+        task_success_rate=1,
+        tool_selection_accuracy=0,
+        argument_accuracy=0,
+        no_tool_accuracy=1,
+        retry_recovery_rate=0,
+        citation_precision=0,
+        citation_recall=0,
+        average_steps=1,
+        total_input_tokens=0,
+        total_output_tokens=0,
+        total_tokens=0,
+        average_latency_ms=1,
+        p50_latency_ms=1,
+        p95_latency_ms=1,
+        stop_reason_distribution={},
+        failure_distribution={},
+    )
 
 
 def test_resume_rejects_changed_dataset_or_config(tmp_path) -> None:
@@ -294,6 +456,18 @@ def test_request_ledger_counts_started_before_finished_and_restores(tmp_path) ->
     assert again.state.requests_started == again.state.responses_finished == 1
     assert again.state.input_tokens == 10
     assert again.state.output_tokens == 5
+
+
+def test_request_ledger_rejects_finish_without_started_request(tmp_path) -> None:
+    ledger = PersistentRequestLedger(tmp_path / "request-ledger.json")
+    result = ModelCallResult(
+        action=ModelAction(kind="final_answer", final_answer="ok"),
+        metadata=ModelCallMetadata(model="mock", latency_ms=1),
+    )
+
+    with pytest.raises(ValueError, match="没有对应 started"):
+        ledger.record_finished(result)
+    assert ledger.state.requests_started == ledger.state.responses_finished == 0
 
 
 @pytest.mark.parametrize(

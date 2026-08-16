@@ -6,6 +6,7 @@ import re
 from collections import Counter
 import math
 from typing import Any
+import unicodedata
 
 from pydantic import BaseModel, Field
 
@@ -71,6 +72,54 @@ def _contains_subset(actual: Any, expected: Any) -> bool:
             for key, value in expected.items()
         )
     return actual == expected
+
+
+def _normalize_fact_text(value: str) -> str:
+    """按固定 Unicode 规则规范化事实文本，不进行语义改写。"""
+
+    return " ".join(unicodedata.normalize("NFKC", value).casefold().split())
+
+
+def _contains_answer_fact(answer: str, fact: str) -> bool:
+    """判断回答是否包含事实字面量，并避免字母数字片段误匹配。
+
+    事实匹配是 NFKC、大小写折叠和空白折叠后的连续字面量匹配；若事实两端
+    是 ASCII 字母、数字或下划线，则相邻同类 ASCII 字符不会被当作边界。
+    CJK 字符不参与这个西文标识边界，因此 ``Kaiji使用工具`` 可以匹配
+    ``使用工具``。该规则能拒绝 ``90`` 匹配 ``190``，但不尝试自然语言蕴含、
+    否定识别、同义词或数值等价（例如 ``90`` 与 ``90.0``）判断。
+    """
+
+    normalized_answer = _normalize_fact_text(answer)
+    normalized_fact = _normalize_fact_text(fact)
+    if not normalized_fact:
+        return False
+
+    def is_ascii_word_character(value: str) -> bool:
+        return (
+            value == "_"
+            or "A" <= value <= "Z"
+            or "a" <= value <= "z"
+            or ("0" <= value <= "9")
+        )
+
+    start = 0
+    while True:
+        position = normalized_answer.find(normalized_fact, start)
+        if position < 0:
+            return False
+        end = position + len(normalized_fact)
+        left_ok = position == 0 or not (
+            is_ascii_word_character(normalized_fact[0])
+            and is_ascii_word_character(normalized_answer[position - 1])
+        )
+        right_ok = end == len(normalized_answer) or not (
+            is_ascii_word_character(normalized_fact[-1])
+            and is_ascii_word_character(normalized_answer[end])
+        )
+        if left_ok and right_ok:
+            return True
+        start = position + 1
 
 
 def _extract_citations(answer: str | None) -> list[str]:
@@ -141,7 +190,7 @@ def score_episode(case: AgentEvalCase, episode: AgentEpisode) -> AgentScore:
 
     answer = episode.result.answer or ""
     answer_facts_correct = all(
-        fact.casefold() in answer.casefold() for fact in case.required_answer_facts
+        _contains_answer_fact(answer, fact) for fact in case.required_answer_facts
     )
     cited = set(_extract_citations(episode.result.answer))
     allowed = set(case.allowed_citation_ids)
@@ -155,6 +204,10 @@ def score_episode(case: AgentEvalCase, episode: AgentEpisode) -> AgentScore:
         cited <= evidence and cited <= allowed and (bool(cited) or not allowed)
     )
     stop_correct = episode.result.stop_reason == case.expected_stop_reason
+    # TODO14 的原生 RunResult 只携带 ToolResult.attempts，因此这里只统计
+    # Executor 在一次工具调用内的有界重试。TODO11 LangGraph 的 query rewrite
+    # 由 retry_count/step_count 单独记录，不应凭“多条消息”在这里猜测；Provider
+    # 的 transport retry 同样属于请求可靠性，不属于业务重试恢复指标。
     retry_recovered = episode.result.stop_reason == StopReason.COMPLETED and any(
         message.tool_result is not None and message.tool_result.attempts > 1
         for message in tool_messages(episode)

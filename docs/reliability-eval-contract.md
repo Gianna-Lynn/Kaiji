@@ -20,9 +20,30 @@ Scripted Formal 的 `agent_cases.jsonl`。
 429、5xx 与响应校验失败允许现有 `ToolExecutor` 有界重试一次；其他 4xx 和明确
 的业务错误不可重试。当前版本不解析 `Retry-After`，也不等待或进行无界退避。
 
-每个模型回合最多接受一个工具调用。非法 JSON、多工具调用、无法配对的
-`tool_call_id`、Schema Drift 和 chunk ID 错配都属于协议或证据失败，不得进入
-成功证据。
+每个模型回合最多接受一个工具调用。历史消息中 assistant 工具调用后必须紧跟一个
+同 `tool_call_id`、同工具名的 tool 结果；孤立 tool、缺失结果、ID/工具名错配以及
+插入其他角色都在请求发送前拒绝。同一历史不得复用调用 ID。非法 JSON、多工具调用、
+关键字段或语义发生 Schema Drift，以及 chunk ID 错配都属于协议或证据失败，不得进入
+成功证据；未消费的兼容扩展字段不属于失败。
+
+Provider 只严格校验会被 Kaiji 消费的关键字段类型（不把字符串/布尔值隐式转换为
+计数或文本），未消费的兼容扩展字段允许忽略，不因服务端新增 `object`、`created`、
+`system_fingerprint`、`index` 或 `logprobs` 等字段而失败。工具路径的
+`finish_reason` 只接受 `tool_calls` 或兼容服务省略该字段，最终回答路径只接受
+`stop` 或省略该字段；最终文本必须包含非空白字符。工具 arguments 必须是 JSON 对象，
+并拒绝 `NaN`、`Infinity` 等非有限常量。
+
+`required_answer_facts` 使用确定性的字面量规则：先对回答和事实分别做 Unicode
+NFKC 规范化、大小写折叠与连续空白折叠，再要求事实作为连续片段出现；事实两端若
+是 ASCII 字母、数字或下划线，则不能与回答中的同类 ASCII 字符相邻（例如事实
+`90` 不匹配 `190`）；CJK 字符不参与该西文标识边界。该字段不做自然语言蕴含、
+否定识别、同义词、翻译或数值等价判断，题目应
+提供可由字面量检查的短事实。空白事实、重复事实在 `AgentEvalCase` 构造时拒绝。
+
+TODO14 的 `retry_recovered` 只统计原生 `AgentRuntime` 中 `ToolExecutor` 在同一
+工具调用内的有界 retry，并要求最终运行成功。TODO11 LangGraph 的 query rewrite
+由 `retry_count`/`step_count` 独立记录，不能从 Native `RunResult` 的消息数量猜测；
+Provider 的 timeout、网络、429、5xx retry 是传输可靠性指标，不属于该业务恢复指标。
 
 工具 Schema 与 Executor 使用同一严格边界：未声明输入和输出字段都拒绝，参数、结果、
 证据 metadata 只允许有限 JSON。同一运行内 `tool_call_id` 不得复用；Search 响应的
@@ -39,6 +60,11 @@ Scripted Formal 的 `agent_cases.jsonl`。
 
 ## Formal 持久化与恢复
 
+普通 `ExperimentRunner` 与 Formal Runner 的失败语义不同：普通 Experiment 只有在
+`case × repeat` 全部完成且校验通过时才返回并落盘正式 `ExperimentReport`；Provider、
+评分、身份校验或产物写入异常会直接失败，不生成 `incomplete` 报告。需要断点续跑和
+部分产物时必须使用 Formal Runner，不能把普通实验的异常目录当作正式成绩。
+
 真实 Behavior Formal 由 20 条核心行为与 20 条一一对应同义变体组成，重复三次后为
 120 Episode。Reliability Formal 保留 20 条受控故障并重复三次，形成独立的 60
 Episode 报告。后者执行 Scripted Provider/Fault Injector，不得与前者相加后表述为
@@ -48,7 +74,19 @@ Formal 创建时冻结数据集 hash、完整配置 fingerprint、System Prompt 
 Schema hash、模型、base URL、温度、thinking、输出上限、价格与预算。恢复时任何一项
 变化都必须拒绝；API Key 及其环境变量名不进入 Manifest。
 
-每次真实请求在发送前更新 `request-ledger.json`，响应后再记录已报告 Token。若恢复
+每次真实请求在发送前更新 `request-ledger.json`，响应后再记录已报告 Token。对完整
+Formal，账本不变量是 `responses_finished == requests_started`，且真实 Provider 的
+`requests_started` 必须等于所有已完成 Episode 中模型回合数加每个回合的
+`prior_attempt_failures` 数量；模型重试也占用一次请求预算。Scripted/Mock Preflight
+明确不发送模型请求，账本请求数固定为 0，不能拿 Episode 中的替身模型回合数冒充真实
+网络请求。
+
+`FormalRunReport` 模型本身只校验上述计数的结构关系，允许 `expected_request_count=0`
+表示离线替身；它不携带 Provider 配置，不能独立证明 real-provider 语义。只有
+`ResumableFormalRunner._report` 根据冻结的 `FormalRunConfig.provider` 绑定 live/offline
+口径后，才可作真实请求账本结论。
+
+若恢复
 时 `requests_started != responses_finished`，说明存在成本未知的请求，必须以
 `unresolved_request` 停止人工审计，不得把未知 Token 当零继续。请求硬上限使用
 `requests_started`，因此重启不能重置预算。
@@ -57,6 +95,10 @@ Schema hash、模型、base URL、温度、thinking、输出上限、价格与�
 写入后执行 flush 与 fsync。恢复时已完成坐标只能跳过，不得重复消费。数据、配置、
 hash 链、坐标或 run ID 不一致都必须拒绝恢复。部分报告的 `complete` 必须为 false、
 `aggregate` 必须为空；只有固定矩阵完整后才允许聚合成绩。
+
+hash 链是无密钥的篡改检测机制，不是签名、真实性证明或作者身份认证；能够改写产物的
+攻击者可以重算整条链。需要真实性时必须另行提供可信外部锚点或签名机制，本阶段不把
+链 hash 当作真实性结论。
 
 ## 指标分母
 

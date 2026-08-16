@@ -5,12 +5,15 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import math
+import numbers
+import shutil
 from collections import Counter
 from pathlib import Path
 from typing import Any
 from uuid import uuid4
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, StrictInt, field_validator, model_validator
 
 from kaiji.adapters.azusa import AzusaHttpAdapter, ChunkResponse, MockAzusaAdapter
 from kaiji.azusa_tools import build_azusa_registry
@@ -37,12 +40,37 @@ class ExperimentConfig(BaseModel):
     provider: str = Field(default="scripted", min_length=1)
     harness: HarnessVariant = HarnessVariant.FULL_KAIJI
     suite: str = Field(min_length=1)
-    repeats: int = Field(default=1, ge=1)
+    repeats: StrictInt = Field(default=1, ge=1)
     model: str = "scripted"
-    temperature: float = 0.0
-    max_steps: int = Field(default=4, ge=1)
-    input_cost_per_million: float = Field(default=0.0, ge=0)
-    output_cost_per_million: float = Field(default=0.0, ge=0)
+    temperature: float = Field(default=0.0, ge=0, allow_inf_nan=False)
+    max_steps: StrictInt = Field(default=4, ge=1)
+    input_cost_per_million: float = Field(default=0.0, ge=0, allow_inf_nan=False)
+    output_cost_per_million: float = Field(default=0.0, ge=0, allow_inf_nan=False)
+
+    @field_validator("repeats", "max_steps", mode="before")
+    @classmethod
+    def reject_bool_integer_boundaries(cls, value: object) -> object:
+        """矩阵和运行安全边界不得接受 bool 或数字字符串。"""
+
+        if type(value) is bool:
+            raise ValueError("Experiment 整数配置不得为 bool")
+        return value
+
+    @field_validator(
+        "temperature",
+        "input_cost_per_million",
+        "output_cost_per_million",
+        mode="before",
+    )
+    @classmethod
+    def require_finite_numeric_boundaries(cls, value: object) -> object:
+        """成本与温度必须是有限的真实数值，拒绝 bool 和字符串强制转换。"""
+
+        if type(value) is bool or not isinstance(value, numbers.Real):
+            raise ValueError("Experiment 数值配置必须是有限数值且不得为 bool")
+        if not math.isfinite(float(value)):
+            raise ValueError("Experiment 数值配置必须是有限数值")
+        return value
 
 
 class ExperimentReport(BaseModel):
@@ -59,6 +87,16 @@ class ExperimentReport(BaseModel):
     aggregate: AgentAggregateReport
     bad_case_run_ids: list[str]
     scenario_distribution: dict[str, int]
+
+    @model_validator(mode="after")
+    def require_complete_formal_report(self) -> "ExperimentReport":
+        """普通 Experiment 只有完整成功矩阵才产出正式报告。"""
+
+        if not self.complete:
+            raise ValueError("普通 Experiment 失败不产出 incomplete 正式报告")
+        if self.actual_episode_count != self.expected_episode_count:
+            raise ValueError("正式 Experiment 报告的 Episode 数量必须完整")
+        return self
 
 
 class AblationReport(BaseModel):
@@ -377,41 +415,50 @@ class ExperimentRunner:
 
     @staticmethod
     def _write(output_dir, report, episodes, scores) -> None:
-        """写入新实验目录，已有目录不覆盖。"""
+        """先写新临时目录，全部成功后一次改名，失败不留下正式报告。"""
 
+        output_dir.mkdir(parents=True, exist_ok=True)
         target = output_dir / report.experiment_id
-        target.mkdir(parents=True, exist_ok=False)
-        (target / "episodes.jsonl").write_text(
-            "".join(item.model_dump_json() + "\n" for item in episodes),
-            encoding="utf-8",
-        )
-        (target / "report.json").write_text(
-            report.model_dump_json(indent=2), encoding="utf-8"
-        )
-        bad = [
-            {
-                "episode": item.model_dump(mode="json"),
-                "score": scores[item.run_id].model_dump(mode="json"),
-            }
-            for item in episodes
-            if item.run_id in report.bad_case_run_ids
-        ]
-        (target / "bad_cases.json").write_text(
-            json.dumps(bad, ensure_ascii=False, indent=2), encoding="utf-8"
-        )
-        aggregate = report.aggregate
-        markdown = (
-            f"# Kaiji Reliability Eval\n\n"
-            f"- 实验 ID：`{report.experiment_id}`\n"
-            f"- 完整：`{report.complete}`\n"
-            f"- Episode：{report.actual_episode_count}/{report.expected_episode_count}\n"
-            f"- Task Success：{aggregate.task_success_rate:.3f}\n"
-            f"- Tool Selection：{aggregate.tool_selection_accuracy:.3f}\n"
-            f"- Citation Precision / Recall：{aggregate.citation_precision:.3f} / {aggregate.citation_recall:.3f}\n"
-            f"- Token：{aggregate.total_tokens}\n"
-            f"- 估算成本（USD）：{report.estimated_cost_usd:.6f}\n"
-        )
-        (target / "report.md").write_text(markdown, encoding="utf-8")
+        temporary = output_dir / f".{report.experiment_id}.tmp"
+        if target.exists() or temporary.exists():
+            raise FileExistsError("实验目录已存在，拒绝覆盖")
+        temporary.mkdir()
+        try:
+            (temporary / "episodes.jsonl").write_text(
+                "".join(item.model_dump_json() + "\n" for item in episodes),
+                encoding="utf-8",
+            )
+            (temporary / "report.json").write_text(
+                report.model_dump_json(indent=2), encoding="utf-8"
+            )
+            bad = [
+                {
+                    "episode": item.model_dump(mode="json"),
+                    "score": scores[item.run_id].model_dump(mode="json"),
+                }
+                for item in episodes
+                if item.run_id in report.bad_case_run_ids
+            ]
+            (temporary / "bad_cases.json").write_text(
+                json.dumps(bad, ensure_ascii=False, indent=2), encoding="utf-8"
+            )
+            aggregate = report.aggregate
+            markdown = (
+                f"# Kaiji Reliability Eval\n\n"
+                f"- 实验 ID：`{report.experiment_id}`\n"
+                f"- 完整：`{report.complete}`\n"
+                f"- Episode：{report.actual_episode_count}/{report.expected_episode_count}\n"
+                f"- Task Success：{aggregate.task_success_rate:.3f}\n"
+                f"- Tool Selection：{aggregate.tool_selection_accuracy:.3f}\n"
+                f"- Citation Precision / Recall：{aggregate.citation_precision:.3f} / {aggregate.citation_recall:.3f}\n"
+                f"- Token：{aggregate.total_tokens}\n"
+                f"- 估算成本（USD）：{report.estimated_cost_usd:.6f}\n"
+            )
+            (temporary / "report.md").write_text(markdown, encoding="utf-8")
+            temporary.rename(target)
+        except BaseException:
+            shutil.rmtree(temporary, ignore_errors=True)
+            raise
 
 
 def run_ablation(

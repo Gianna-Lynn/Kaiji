@@ -54,7 +54,8 @@ class OpenAICompatibleConfig(BaseModel):
 class _FunctionCall(BaseModel):
     """校验兼容响应中的函数名称与 JSON 参数字符串。"""
 
-    model_config = ConfigDict(extra="ignore")
+    # 只消费声明字段；兼容服务新增的非语义扩展字段可安全忽略。
+    model_config = ConfigDict(extra="ignore", strict=True)
 
     name: str = Field(min_length=1)
     arguments: str
@@ -63,7 +64,7 @@ class _FunctionCall(BaseModel):
 class _ResponseToolCall(BaseModel):
     """校验单个 OpenAI-compatible 工具调用。"""
 
-    model_config = ConfigDict(extra="ignore")
+    model_config = ConfigDict(extra="ignore", strict=True)
 
     id: str = Field(min_length=1)
     type: str
@@ -73,7 +74,7 @@ class _ResponseToolCall(BaseModel):
 class _ResponseMessage(BaseModel):
     """校验响应消息中最终文本或工具调用的载荷。"""
 
-    model_config = ConfigDict(extra="ignore")
+    model_config = ConfigDict(extra="ignore", strict=True)
 
     role: str
     content: str | None = None
@@ -83,7 +84,7 @@ class _ResponseMessage(BaseModel):
 class _Choice(BaseModel):
     """校验 Chat Completions 的单个候选。"""
 
-    model_config = ConfigDict(extra="ignore")
+    model_config = ConfigDict(extra="ignore", strict=True)
 
     message: _ResponseMessage
     finish_reason: str | None = None
@@ -92,7 +93,7 @@ class _Choice(BaseModel):
 class _Usage(BaseModel):
     """读取 OpenAI-compatible Token 字段。"""
 
-    model_config = ConfigDict(extra="ignore")
+    model_config = ConfigDict(extra="ignore", strict=True)
 
     prompt_tokens: int | None = Field(default=None, ge=0)
     completion_tokens: int | None = Field(default=None, ge=0)
@@ -102,10 +103,10 @@ class _Usage(BaseModel):
 class _ChatResponse(BaseModel):
     """只校验 Kaiji 决策所需的最小响应结构。"""
 
-    model_config = ConfigDict(extra="ignore")
+    model_config = ConfigDict(extra="ignore", strict=True)
 
-    id: str | None = None
-    model: str | None = None
+    id: str | None = Field(default=None, min_length=1)
+    model: str | None = Field(default=None, min_length=1)
     choices: list[_Choice]
     usage: _Usage | None = None
 
@@ -239,7 +240,7 @@ class OpenAICompatibleProvider:
         converted: list[dict[str, Any]] = []
         if self._config.system_prompt is not None:
             converted.append({"role": "system", "content": self._config.system_prompt})
-        converted.extend(self._convert_message(message) for message in messages)
+        converted.extend(self._convert_messages(messages))
         tools = [
             {"type": "function", "function": schema}
             for schema in self._registry.schemas()
@@ -298,6 +299,46 @@ class OpenAICompatibleProvider:
             "content": message.content,
         }
 
+    def _convert_messages(self, messages: list[Message]) -> list[dict[str, Any]]:
+        """转换完整历史，并验证每个 assistant/tool 回合的严格配对。
+
+        OpenAI-compatible 的 tool 消息没有独立的回合身份，唯一可靠的关联键是
+        ``tool_call_id``。因此本实现限定一个 assistant 工具调用后必须紧跟一个
+        同 ID、同工具名的 tool 结果；孤立、错配、缺失结果和插入其他角色都在
+        发请求前拒绝。调用 ID 在一份历史中也不得复用，避免把旧结果误配到新回合。
+        """
+
+        converted: list[dict[str, Any]] = []
+        seen_call_ids: set[str] = set()
+        pending: ToolCall | None = None
+        for message in messages:
+            if pending is not None:
+                if message.role != "tool" or message.tool_result is None:
+                    raise ValueError("assistant 工具调用后必须紧跟对应 tool 结果")
+                result = message.tool_result
+                if (
+                    result.call_id != pending.call_id
+                    or result.tool_name != pending.name
+                ):
+                    raise ValueError("tool 结果必须与前一个 assistant 工具调用配对")
+                converted.append(self._convert_message(message))
+                pending = None
+                continue
+
+            if message.role == "tool":
+                raise ValueError("tool 结果不能没有前一个 assistant 工具调用")
+            converted.append(self._convert_message(message))
+            if message.role == "assistant" and message.tool_call is not None:
+                call = message.tool_call
+                if call.call_id in seen_call_ids:
+                    raise ValueError("同一历史不得复用 tool_call_id")
+                seen_call_ids.add(call.call_id)
+                pending = call
+
+        if pending is not None:
+            raise ValueError("assistant 工具调用缺少对应 tool 结果")
+        return converted
+
     @staticmethod
     def _parse_action(response: _ChatResponse) -> ModelAction:
         """把唯一候选解析为最终回答或至多一个工具调用。"""
@@ -316,7 +357,17 @@ class OpenAICompatibleProvider:
             call = calls[0]
             if call.type != "function":
                 raise ValueError("只支持 function 工具调用")
-            arguments = json.loads(call.function.arguments)
+            # Python 的 json.loads 默认接受 NaN/Infinity；这些值不能进入 ToolCall
+            # 或后续 Trace，因此在协议边界显式拒绝，而不是依赖序列化时才失败。
+            def reject_nonfinite(value: str) -> None:
+                """拒绝 Python JSON 解码器默认放行的非有限常量。"""
+
+                raise ValueError(f"不允许非有限 JSON 常量：{value}")
+
+            arguments = json.loads(
+                call.function.arguments,
+                parse_constant=reject_nonfinite,
+            )
             if not isinstance(arguments, dict):
                 raise TypeError("工具参数必须是 JSON 对象")
             return ModelAction(
@@ -328,8 +379,8 @@ class OpenAICompatibleProvider:
                 ),
                 assistant_content=message.content or "",
             )
-        if not message.content:
-            raise ValueError("无工具调用时必须包含最终回答")
+        if not message.content or not message.content.strip():
+            raise ValueError("无工具调用时必须包含非空白最终回答")
         if response.choices[0].finish_reason not in {None, "stop"}:
             raise ValueError("最终回答未正常停止")
         return ModelAction(kind="final_answer", final_answer=message.content)
