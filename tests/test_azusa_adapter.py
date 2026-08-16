@@ -579,8 +579,8 @@ def test_todo_7c_search_reuses_encoder_and_resolver_helpers() -> None:
     assert result.hits[0].text == "helper 正文"
 
 
-def test_todo_7c_get_chunk_narrow_path_rejects_bad_id_without_resolver() -> None:
-    calls = 0
+def test_todo_7c_get_chunk_narrow_path_rejects_bad_id_without_resolver() -> None:  # TODO 7c 的 get_chunk 窄路径，在收到坏 ID 时拒绝请求，并且不经过 resolver。
+    calls = 0       # 记录 resolver 被调用了多少次。
 
     def resolver(_: str) -> str:
         nonlocal calls
@@ -588,14 +588,14 @@ def test_todo_7c_get_chunk_narrow_path_rejects_bad_id_without_resolver() -> None
         return "正文"
 
     adapter = LegacyAzusaVectorHttpAdapter(
-        "http://azusa.test", query_encoder=lambda _: [1], text_resolver=resolver
+        "http://azusa.test", query_encoder=lambda _: [1], text_resolver=resolver    # lambda函数: 无论输入什么, 都返回[1]
     )
     try:
-        with pytest.raises(AzusaAdapterError) as caught:
+        with pytest.raises(AzusaAdapterError) as caught:    # 这段代码必须抛出 AzusaAdapterError，否则测试失败。
             adapter.get_chunk_by_id("   ")
     finally:
         adapter.close()
-    assert caught.value.retryable is False and calls == 0
+    assert caught.value.retryable is False and calls == 0   # 非法 ID 被发现后，resolver 根本不应该运行。
 
 
 def test_todo_7c_get_chunk_narrow_path_returns_resolved_chunk_without_http() -> None:

@@ -528,24 +528,27 @@ GET /chunks/{chunk_id}
 
 | 失败 | `retryable` |
 |---|---:|
-| 参数或其他 HTTP 4xx | `False` |
+| 参数错误或 HTTP 3xx | `False` |
+| HTTP 429 | `True` |
+| 除 429 外的 HTTP 4xx | `False` |
 | HTTP 5xx | `True` |
 | timeout / network error | `True` |
 | 非法 JSON 或响应 Schema 不匹配 | `True` |
 
-3xx 在本课按非 5xx 的 HTTP 错误处理，因此为不可重试；429 也按 v0 简化策略归入全部
-4xx，不可重试。这个分类是 Kaiji v0 的教学策略，不是通用生产规则；生产系统可能
-单独处理 408、425、429、`Retry-After`、重定向和协议漂移。
+3xx 在本课作为不可重试的 HTTP 错误处理。429 表示服务端限流，稍后再次调用可能恢复，
+因此单独标记为可重试；除 429 外的其他 4xx 表示当前请求本身存在问题，标记为不可重试。
+HTTP 5xx、timeout 和网络错误可能来自瞬时故障，因此标记为可重试。
 
-Adapter 只负责分类并抛出 `AzusaAdapterError`，自身不循环重试；`ToolExecutor` 在
-`max_retries=1` 的工具定义下决定是否再执行一次。完成：
+这只是错误分类，不表示 Adapter 自己执行重试。Adapter 每次只发起一次计划内 HTTP
+操作；真正的重试由 `ToolExecutor` 根据工具的 `max_retries=1` 执行，最多额外尝试一次。
+当前版本不解析 `Retry-After`，也不等待或执行无界退避。
 
 | 失败所在层 | 行为 |
 |---|---|
 | Pydantic 工具参数不合法 | Executor 在调用 Adapter 前拒绝，`attempts=0` |
 | Legacy 本地 encoder/resolver 抛异常或返回非法值 | `retryable=False` |
-| 远端 timeout/network/5xx/非法 JSON/Schema | `retryable=True` |
-| 远端 4xx | `retryable=False` |
+| 远端 timeout/network/429/5xx/非法 JSON/Schema | `retryable=True` |
+| 远端除 429 外的 4xx | `retryable=False` |
 
 - Mock Adapter；
 - 语义 HTTP Adapter；

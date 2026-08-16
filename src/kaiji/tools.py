@@ -65,7 +65,12 @@ class ToolDefinition:
 
 
 class ToolRegistry:
-    """按唯一名称保存工具定义，并向模型暴露参数 Schema。"""
+    """
+    以 name 为键的 ToolDefinition 注册表.
+    register 要求名称唯一(重名报错);
+    schemas() 把每个工具的 arguments_model 转成 JSON Schema, 
+    让 LLM 知道每个工具接受什么参数、怎么调用。
+    """
 
     def __init__(self) -> None:
         self._tools: dict[str, ToolDefinition] = {}
@@ -140,13 +145,14 @@ class ToolExecutor:
         for attempt in range(1, attempts_allowed + 1):
             try:
                 raw_result = self._invoke_with_timeout(definition, arguments)
-                result = definition.result_model.model_validate(
+                result = definition.result_model.model_validate(    # 二次校验
                     raw_result,
                     extra="forbid",
                 )
-                output = result.model_dump(mode="json")
+                output = result.model_dump(mode="json")             # 转成: 只含有JSON原生类型(str/int/float/bool/None/list/dict)的dict, 不包含没有 datetime、Decimal、set 这些.
                 try:
-                    json.dumps(output, allow_nan=False)
+                    json.dumps(output, allow_nan=False)             # allow_nan=False: 必须是干净JSON(严格符合JSON规范的JSON, 不含有NaN/Infinity)
+                    # 上面这行代码本质是"试运行一次序列化，把结果丢掉".
                 except (TypeError, ValueError) as exc:
                     raise _InvalidToolResult(str(exc)) from exc
                 return ToolResult(
