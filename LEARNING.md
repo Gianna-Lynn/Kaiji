@@ -119,6 +119,12 @@ python -m kaiji.demo
 
 #### TODO 1：Tool Registry
 
+##### 这是什么，为什么需要它
+
+Tool Registry 是 Kaiji 的工具目录：集中声明 Agent 被允许看见的工具、输入输出 Schema 与 handler。模型能提出调用，但不能凭自由文本获得任意能力；Registry 让工具边界可审查、可发现。
+
+没有它，工具定义和权限会散落在 Runtime 分支中，新增工具会牵连控制流。本课只负责声明与查找，不决定调用、重试或失败策略；完成后，人能判断一次调用是否指向已注册、Schema 已公开的能力。
+
 文件：`src/kaiji/tools.py`
 
 完成：
@@ -137,6 +143,12 @@ python -m pytest tests/test_registry.py
 答: Registry只负责检索工作, 返回"某某工具是有还是没有".Executor在拿到Registry的返回结果后,决定怎么使用.Executor有整个 Agent 循环的控制权（State、Budget、Trace、Approval）,由它负责决策.
 
 #### TODO 2：调用前校验
+
+##### 这是什么，为什么需要它
+
+调用前校验是工具边界的门禁：先确认工具存在，再将模型给出的 JSON 参数解析为 Pydantic 输入模型，只有通过后 handler 才能接触网络、文件或业务服务。
+
+模型输出不天然可信。没有这层门禁，拼错名称或缺失参数会混成业务失败、甚至触发副作用，attempts 与重试统计也会失真。本课只拒绝无效请求，不处理 handler 内部的超时和异常；完成后，人能区分“模型填错”与“工具已开始执行但失败”。
 
 文件：`src/kaiji/tools.py`
 
@@ -158,6 +170,12 @@ attempt 表示一次真正发起 handler 的执行尝试。执行器会先查找
 是否继续执行下一轮由 retryable 单独决定。未知工具和参数错误通常不可重试；暂时性网络错误或超时可能允许重试。两者的职责不同：attempts 记录执行次数，retryable 决定失败后是否继续。
 
 #### TODO 3：执行、结果校验与有界重试
+
+##### 这是什么，为什么需要它
+
+Tool Executor 把合法调用请求变成可被 Agent 信任的 ToolResult：它限制等待时间、区分可恢复与不可恢复失败、限制重试次数，并校验 handler 输出。网络会抖动，handler 也可能返回形似成功但结构错误的数据，二者都不能直接进入模型上下文或引用。
+
+没有统一 Executor，每个工具都会各自发明 timeout、错误格式和 retry 规则，造成无限重试、吞错或坏数据伪装成功。本课只做一次额外重试来学习“恢复必须有预算”，不实现生产级退避、熔断或队列；完成后，人能解释一个结果为何可信、一次失败为何停止或再试。
 
 文件：`src/kaiji/tools.py`
 
@@ -186,6 +204,12 @@ python -m pytest tests/test_executor.py
 └─ 未预期异常 → stop
 
 #### TODO 4：原生 Agent Loop
+
+##### 这是什么，为什么需要它
+
+原生 Agent Loop 是 Kaiji 最小的受控 Runtime：它反复取得模型动作、执行必要工具、回填已校验结果，并在明确条件下终止。Agent 不是一次模型调用，而是会累积状态、触发外部能力的有限状态机。
+
+没有显式 Loop，重复调用、工具失败、无最终答案和无限思考都会变成隐式行为，既不能诊断，也无法阻止失败结果进入答案。本课建立最小可靠闭环，不实现自主规划、长期记忆或任意代码执行；完成后，人能从 question 追到 final answer 或明确 stop reason。
 
 文件：`src/kaiji/runtime.py`
 
@@ -256,6 +280,12 @@ run(question)
 
 #### TODO 5：LangChain 对照
 
+##### 这是什么，为什么需要它
+
+这一课把 TODO 1—4 中亲手实现的消息与工具边界映射到 LangChain 的 Message、StructuredTool 与 Runnable。框架能减少组合代码，却不会自动替人定义合法输入、可信结果或 timeout、权限责任。
+
+没有这层对照，学习框架 API 容易变成“能跑但不知道发生什么”的记忆题。本课用最小且有损的映射揭示框架包装的机械工作，不把 Kaiji 的可靠性边界交给框架；完成后，人能指出原生对象的框架对应物与仍由 Kaiji 负责的部分。
+
 文件：`src/kaiji/langchain_compare.py`
 
 这一课只比较表达方式，不改变 Kaiji 已经建立的可靠性边界。当前 `Message` 没有
@@ -311,6 +341,12 @@ python -m pytest tests/test_langchain_compare.py
 Kaiji？
 
 #### TODO 6：LangGraph 状态工作流
+
+##### 这是什么，为什么需要它
+
+LangGraph 工作流把多步控制流显式表达为可持久化的 State、Node、Edge 与条件分支。它适合“检索失败后只改写一次”和“有副作用前必须人工确认”这类流程：执行到哪里、为何跳转、暂停后如何继续都成为状态机的一部分。
+
+没有显式工作流，重试计数、审批决定和恢复位置容易藏在局部变量或调用栈中；中断后无法可靠恢复，也难审查是否绕过审批。本课用 LangGraph 表达既定流程，不重新实现 TODO 4 的完整 Tool Agent，也不把框架 Checkpoint 混同于长期 Memory；完成后，人能解释 Interrupt 前后哪些状态被保存与恢复。
 
 文件：`src/kaiji/langgraph_workflow.py`
 
@@ -491,6 +527,12 @@ LangGraph Checkpoint 误当成长期 Memory。
 
 #### TODO 7：Azusa Adapter
 
+##### 这是什么，为什么需要它
+
+Azusa Adapter 是 Kaiji 与检索系统间的防腐层：它将 HTTP、旧版 vector/record 协议和远端失败翻译成稳定的 `SearchResponse`、`ChunkResponse` 与结构化错误。Kaiji 只需要可信证据，不应依赖 Azusa 内部检索实现；Azusa 也无需了解 Agent Loop、Trace 或审批。
+
+没有 Adapter，网络与兼容细节会渗入 Registry、Runtime 和模型消息，接口演进会牵连整条 Agent 链。本课建立稳定的只读服务边界与旧接口兼容，不实现 Azusa 内部检索、缓存、并发调优或无限重试；完成后，人能替换 Mock、语义 HTTP 与 Legacy Adapter 而保持上层语义一致。
+
 施工主线先建立两条类型流。正常数据链是：
 `ToolCall.arguments → SearchAzusaArgs / GetChunkArgs → Registry handler → AzusaAdapter
 → SearchResponse / ChunkResponse（Pydantic 对象）→ model_dump(mode="json") → JSON
@@ -611,6 +653,12 @@ python -m pytest tests/test_azusa_adapter.py
 
 #### TODO 8：Checkpoint
 
+##### 这是什么，为什么需要它
+
+Checkpoint 是一次运行在某个时刻的完整恢复快照，回答“这条任务中断后从哪里继续”。例如审批前暂停的工作流需要保存问题、待办动作与已取得证据，之后才能在同一 thread 上继续，而不是从头猜测。
+
+没有 Checkpoint，运行只能依赖内存；进程退出、服务重启或人工等待时，执行位置与状态都会丢失。原子写入和显式损坏报错避免半份快照伪装成正常状态。本课只实现单机文件快照，不解决多进程并发、冲突合并或通用业务 State 校验；完成后，人能区分它与 LangGraph MemorySaver、长期 Memory 的职责。
+
 文件：`src/kaiji/persistence.py`
 
 Checkpoint 是一次执行的完整恢复快照。JSON 第一层按 `thread_id` 隔离，第二层按
@@ -639,6 +687,12 @@ python -m pytest tests/test_persistence.py -k checkpoint
 ```
 
 #### TODO 9：Memory
+
+##### 这是什么，为什么需要它
+
+Memory 是调用方明确选择、跨运行长期保存的少量事实，例如用户偏好或稳定设置；它不是聊天全文，也不是精确恢复执行位置的 Checkpoint。它让未来任务使用经过选择和隔离的信息，而不必永久携带整段历史或内部状态。
+
+没有这层区分，Message History、运行 State 和长期事实会混在一起，既难控制作用域，也会把临时状态误作用户偏好。本课只提供可靠存取、覆盖和用户隔离，不自动判断该记住什么，也不做向量记忆、摘要或召回；完成后，人能解释一条数据为何应写进 Memory 而非其他状态容器。
 
 文件：`src/kaiji/persistence.py`
 
@@ -680,6 +734,12 @@ python -m pytest tests/test_persistence.py -k memory
 
 #### TODO 10：Trace 保存与重放
 
+##### 这是什么，为什么需要它
+
+Trace 是一次已结束 Agent 运行的可审计过程记录：模型做了什么、工具怎样返回、最终为何停止。它把“这次回答不对”的模糊印象变成可逐步查看和比较的事实，也是调试、事故分析与评测取证的基础。
+
+没有 Trace，最终答案无法说明依据或失败位置，重放也可能因记录含糊产生不同理解。本课保证 Trace 的结构、持久化和稳定的人类可读回放，不替业务判断答案正确性，也不实现分布式链路追踪或并发 writer；完成后，人能用 run_id 还原停止原因和事件顺序。
+
 文件：`src/kaiji/tracing.py`
 
 完成 JSONL append、load、迭代和人类可读 replay。这里的字段职责是：
@@ -716,6 +776,12 @@ python -m pytest tests/test_tracing.py
 ```
 
 #### TODO 11：固定 Eval
+
+##### 这是什么，为什么需要它
+
+固定 Eval 是一组可重复运行的题目与统一评分口径，用于检验 Agent 是否持续完成应做的事，而不只是偶然演示出一段不错的答案。它将工具选择、参数、重试、引用、步骤和延迟变为可比较指标，使改动后能够定位具体哪项能力退化。
+
+没有固定用例和稳定分母，“成功率”会随测试集合、记录顺序或缺失字段悄悄改变，团队也难区分模型选错、工具失败与统计错误。本课建立确定性 case/observation 聚合边界，不把金标 fixture 当作真实 Agent Eval，也不解决开放域质量或在线 A/B 实验；完成后，人能说明每项指标回答的问题及其分母为何固定。
 
 文件：
 
@@ -810,6 +876,12 @@ python -m kaiji.eval_demo
 注意分母：没有要求工具调用的 case，不应进入工具选择准确率的分母。
 
 #### TODO 12：真实 Azusa HTTP 联调
+
+##### 这是什么，为什么需要它
+
+真实 HTTP 联调让课程从 Mock 小闭环走向跨仓库事实闭环：Kaiji 真实请求 Azusa，获得检索命中，再按 `chunk_id` 取回同一份证据正文。它验证的不只是某个类在隔离测试中“像是正确”，而是双方关于 URL、Schema、ID 与证据语义的契约能跨进程共同成立。
+
+没有这一步，Mock 测试全绿仍可能掩盖路由、端口或序列化不一致。本课只验证最小 BM25 数据闭环，不把它误当作真实语料质量、性能压测或生产部署验收；因此 live test 必须实际通过，不能以 skip 代替。完成后，人能证明成功引用来自 Azusa 实际返回且可按 ID 再次取得的证据。
 
 这一课跨越两个仓库。普通全量测试在未设置 `AZUSA_GATEWAY_URL` 时会 skip live test；
 因此 TODO 12 的完成条件不是“全量测试没有失败”，而是该文件明确显示 `1 passed`，不能

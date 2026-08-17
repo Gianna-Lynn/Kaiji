@@ -6,7 +6,7 @@ import json
 from pathlib import Path
 from typing import Any
 
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field, field_validator, ConfigDict
 
 
 _MISSING = object()
@@ -45,6 +45,7 @@ def _write_json_atomic(path: Path, payload: Any) -> None:
 
 class Checkpoint(BaseModel):
     """表示某个线程在指定检查点保存的完整执行状态。"""
+    model_config = ConfigDict(extra="forbid") # 禁止额外字段, 形如unexpected="bad",
 
     thread_id: str
     checkpoint_id: str
@@ -67,25 +68,29 @@ class JsonCheckpointStore:
     线程末尾。Store 只校验 ``state`` 是 JSON 对象，具体 AgentState 的业务
     Schema 仍由调用方校验。多进程写锁、冲突合并和临时文件清扫不在本课范围内。
 
-    JSON文件示例:
+    JSON 文件结构形如：
+    checkpoints_by_thread
+            └── thread_id
+                └── checkpoint_id
+                    └── state
+    
+    一个JSON文件的例子:
     {
-        "thread-alice": {       # thread_id
-            "step-1": {         # checkpoint_id
-                                # checkpoint_id这个键对应的值是一个字典, 这个字典是state
+        "thread-alice": {                    # thread_id
+            "checkpoint-before-search": {    # checkpoint_id
                 "messages": ["用户问题", "工具调用结果"],
                 "step_count": 2,
-                "status": "waiting_for_approval",
-                
+                "status": "waiting_for_approval"
             },
-            "step-2": {         # checkpoint_id
+            "checkpoint-after-approval": {   # checkpoint_id
                 ...
             },
-            "waiting-approval": {   # checkpoint_id
+            "checkpoint-final": {             # checkpoint_id
                 ...
-            },
+            }
         },
 
-        "thread-bob": {         # thread_id
+        "thread-bob": {                      # thread_id
             ...
         }
     }
@@ -106,46 +111,49 @@ class JsonCheckpointStore:
         其他损坏结构必须报错，不能被当成空 Store 或未命中。后续保存与恢复
         都依赖这一个读取边界，因此必须先完成它，不能在各方法中另写宽松解析。
         """
-        ckpt_dict = _read_json_object(path=self._path, label="我不知道") # 只校验文件最外层必须是对象
-        for thread_id, thread_info in ckpt_dict.items(): # .items()方法可以同时获得键和值
-            # 这里的thread_info应当是一个字典, 形如:
+        checkpoints_by_thread = _read_json_object(
+            path=self._path,
+            label="检查点",
+        )
+        for thread_id, thread_checkpoints in checkpoints_by_thread.items():
+            # thread_checkpoints 是该线程按 checkpoint_id 建立的字典，形如：
             # {
-            # "step-1": {
+            # "checkpoint-before-search": {
             #      "messages": ["用户问题", "工具调用结果"],
             #      "step_count": 2,
             #      "status": "waiting_for_approval",
             # },
-            # "step-2": {
+            # "checkpoint-after-approval": {
             #     ...
             # },
-            # "waiting-approval": {
+            # "checkpoint-final": {
             #     ...
             # },
             # }
 
-            # 校验1: thread_id键不能是空白
-            if not thread_id.strip():   # if "是空白"
-                raise ValueError("thread_id should not be blank.")
+            # 校验 1：thread_id 键不能是空白。
+            if not thread_id.strip():
+                raise ValueError("thread_id 不得为空白")
 
-            # 校验2: thread_info值应当是一个dict
-            if not isinstance(thread_info, dict):
-                raise ValueError("A thread_info in a thread should be dict.")
-            for state_id, state_info in thread_info.items():
-            # 这里的一个state_info形如:
+            # 校验 2：线程值必须是 checkpoint_id 到 state 的字典。
+            if not isinstance(thread_checkpoints, dict):
+                raise ValueError("线程对应的检查点集合必须是字典")
+            for checkpoint_id, state in thread_checkpoints.items():
+            # state 是某个 checkpoint_id 对应的业务状态，形如：
             # {
             #     "messages": ["用户问题", "工具调用结果"],
             #     "step_count": 2,
             #     "status": "waiting_for_approval",
             # }
-                # 校验3: state_id不能是空白.
-                if not state_id.strip():
-                    raise ValueError("state_id should not be blank.")
-                # 校验4: state_info值应当是一个dict
-                if not isinstance(state_info, dict):
-                    raise ValueError("A state_info in a state should be dict.")
-                # 校验5: state_info可以严格JSON序列化.
-                json.dumps(state_info, allow_nan=False) # json.dumps 遇到 object() 这种不可序列化的东西，抛 TypeError
-        return ckpt_dict
+                # 校验 3：checkpoint_id 键不能是空白。
+                if not checkpoint_id.strip():
+                    raise ValueError("checkpoint_id 不得为空白")
+                # 校验 4：state 必须是字典。
+                if not isinstance(state, dict):
+                    raise ValueError("检查点对应的 state 必须是字典")
+                # 校验 5：state 必须能够以严格 JSON 序列化。
+                json.dumps(state, allow_nan=False)
+        return checkpoints_by_thread
 
     def save(self, checkpoint: Checkpoint) -> None:
         """保存或覆盖快照，并把它标记为该线程最后一次成功保存。
@@ -160,22 +168,20 @@ class JsonCheckpointStore:
         # checkpoint_id: str
         # state: dict[str, Any]
 
-        ckpt_dict = self._read_all()
+        checkpoints_by_thread = self._read_all()
 
-        # region ckpt_dict示例:
+        # region checkpoints_by_thread 示例：
         #     {
-        #         "thread-alice": {       # thread_id
-        #             "step-1": {         # checkpoint_id
-        #                                 # checkpoint_id这个键对应的值是一个字典, 这个字典是state
+        #         "thread-alice": {                    # thread_id
+        #             "checkpoint-before-search": {    # checkpoint_id
         #                 "messages": ["用户问题", "工具调用结果"],
         #                 "step_count": 2,
         #                 "status": "waiting_for_approval",
-                        
         #             },
-        #             "step-2": {         # checkpoint_id
+        #             "checkpoint-after-approval": {
         #                 ...
         #             },
-        #             "waiting-approval": {   # checkpoint_id
+        #             "checkpoint-final": {
         #                 ...
         #             },
         #         },
@@ -186,24 +192,23 @@ class JsonCheckpointStore:
         #     }
         # endregion
 
-        if checkpoint.thread_id in ckpt_dict:
-            # 存在线程
-            thread_info = ckpt_dict.get(checkpoint.thread_id)
-            if checkpoint.checkpoint_id in thread_info: 
-                # 已存在旧快照, 覆盖旧快照, 移动到线程末尾.
-                # 移动到整个字典的末尾: 通过"移除+重新添加"的办法.
-                thread_info.pop(checkpoint.checkpoint_id)
-                thread_info[checkpoint.checkpoint_id] = checkpoint.state
+        if checkpoint.thread_id in checkpoints_by_thread:
+            # 线程已存在。
+            thread_checkpoints = checkpoints_by_thread.get(checkpoint.thread_id)
+            if checkpoint.checkpoint_id in thread_checkpoints:
+                # 已存在旧检查点；删除后重新添加，使它移动到线程末尾。
+                thread_checkpoints.pop(checkpoint.checkpoint_id)
+                thread_checkpoints[checkpoint.checkpoint_id] = checkpoint.state
             else:
-                # 不存在旧快照, 新建快照.
-                thread_info[checkpoint.checkpoint_id] = checkpoint.state
+                # 该 checkpoint_id 尚不存在，追加新的 state。
+                thread_checkpoints[checkpoint.checkpoint_id] = checkpoint.state
         else:
-            # 不存在线程
-            ckpt_dict[checkpoint.thread_id] = {
-                checkpoint.checkpoint_id : checkpoint.state
+            # 线程尚不存在，创建它的检查点字典。
+            checkpoints_by_thread[checkpoint.thread_id] = {
+                checkpoint.checkpoint_id: checkpoint.state
             }
-        json.dumps(ckpt_dict, allow_nan=False) # json.dumps 遇到 object() 这种不可序列化的东西，抛 TypeError
-        _write_json_atomic(self._path, ckpt_dict)
+        json.dumps(checkpoints_by_thread, allow_nan=False)
+        _write_json_atomic(self._path, checkpoints_by_thread)
         return
 
     def load(self, thread_id: str, checkpoint_id: str) -> Checkpoint | None:
@@ -219,20 +224,23 @@ class JsonCheckpointStore:
         if not checkpoint_id.strip():
             raise ValueError("checkpoint_id should not be blank.")
         
-        ckpt_dict = self._read_all()
-        if thread_id in ckpt_dict:
-            # 线程键thread_id存在
-            thread_info = ckpt_dict.get(thread_id)
-            if checkpoint_id in thread_info:
-                # checkpoint键存在
-                state = thread_info[checkpoint_id]
-                # 校验值是不是损坏. 下面这一句会自动进行pydantic校验, 不需要自己再显式校验.
-                return Checkpoint(thread_id=thread_id, checkpoint_id=checkpoint_id,state=state) 
+        checkpoints_by_thread = self._read_all()
+        if thread_id in checkpoints_by_thread:
+            # thread_id 存在。
+            thread_checkpoints = checkpoints_by_thread.get(thread_id)
+            if checkpoint_id in thread_checkpoints:
+                # checkpoint_id 存在；Checkpoint 构造会重新校验恢复数据。
+                state = thread_checkpoints[checkpoint_id]
+                return Checkpoint(
+                    thread_id=thread_id,
+                    checkpoint_id=checkpoint_id,
+                    state=state,
+                )
             else:
-                # checkpoint键不存在
+                # checkpoint_id 不存在。
                 return None
         else:
-            # 线程键thread_id不存在
+            # thread_id 不存在。
             return None
 
     def latest(self, thread_id: str) -> Checkpoint | None:
@@ -245,36 +253,41 @@ class JsonCheckpointStore:
         if not thread_id.strip():
             raise ValueError("thread_id should not be blank.")
 
-        ckpt_dict = self._read_all()
-        if thread_id in ckpt_dict:
-            # 线程键thread_id存在
-            thread_info = ckpt_dict.get(thread_id)
-            if not thread_info:
-                # thread_info这个字典是空的.
+        checkpoints_by_thread = self._read_all()
+        if thread_id in checkpoints_by_thread:
+            # thread_id 存在。
+            thread_checkpoints = checkpoints_by_thread.get(thread_id)
+            if not thread_checkpoints:
+                # 线程存在，但还没有保存任何检查点。
                 return None
 
-            state_id = next(reversed(thread_info))
-            state_info = thread_info[state_id]
-
-            # if state_info is None:    # _read_all() 已经保证 checkpoint 对应的 state 必须是字典。如果它是 None，应该在读取边界就报错；
-            #     return None
+            checkpoint_id = next(reversed(thread_checkpoints))
+            state = thread_checkpoints[checkpoint_id]
             return Checkpoint(
                 thread_id=thread_id,
-                checkpoint_id=state_id,
-                state=state_info,
+                checkpoint_id=checkpoint_id,
+                state=state,
             )
 
         else:
-            # 线程键thread_id不存在
+            # thread_id 不存在。
             return None
 
 
 class MemoryEntry(BaseModel):
     """表示由应用策略筛选后允许长期保存的一条事实。"""
-
+    model_config = ConfigDict(extra="forbid") # 禁止额外字段, 形如unexpected="bad"
     key: str
     value: str
     tags: list[str] = Field(default_factory=list)
+
+    @field_validator("key")  # 把规则挂在模型上，任何一条构造路径（save() 里新建、load() 里恢复、model_validate 反序列化）都会自动走同一条校验，不用每个方法重复写。
+    @classmethod
+    def _reject_blank_identifiers(cls, value: str) -> str:
+        """事实键不允许空字符串或者纯空白"""
+        if not value.strip():
+            raise ValueError("key 不允许空字符串或者纯空白")
+        return value    # 验证完原样 return value，不改写输入
 
 
 class JsonMemoryStore:
@@ -284,6 +297,35 @@ class JsonMemoryStore:
     ``MemoryEntry``。相同用户和键覆盖旧值，但维持该键第一次插入的位置，因此
     ``list`` 按首次插入顺序返回。是否值得长期保存由调用方决定；Store 不分析
     Message，也不自动从 AgentState 提取事实。多进程并发写入不在本课范围内。
+
+    JSON 文件结构形如：
+    entries_by_user
+        └── user_id
+            └── entry.key
+                └── MemoryEntry 字段（key、value、tags）
+
+    JSON 文件示例：
+    {
+        "user-alice": {                 # user_id
+            "favorite-color": {         # entry.key，同时也是第二层键
+                "key": "favorite-color",
+                "value": "蓝色",
+                "tags": ["偏好", "颜色"]
+            },
+            "timezone": {
+                "key": "timezone",
+                "value": "Asia/Shanghai",
+                "tags": ["设置"]
+            }
+        },
+        "user-bob": {
+            "favorite-color": {
+                "key": "favorite-color",
+                "value": "绿色",
+                "tags": ["偏好", "颜色"]
+            }
+        }
+    }
     """
 
     def __init__(self, path: Path) -> None:
@@ -300,8 +342,40 @@ class JsonMemoryStore:
         也不能让后续 ``put`` 在损坏数据上继续写入。后续方法统一复用这个边界。
         """
 
-        raise NotImplementedError("TODO 9a：实现长期事实存储结构校验")
+        entries_by_user = _read_json_object(path=self._path, label="长期事实")
+        for user_id, user_entries in entries_by_user.items():
+            # 校验 1: user_id 键不能是空白.
+            if not user_id.strip():
+                raise ValueError("user_id 不得为空白")
+            # 校验 2: user_entries 须是字典
+            if not isinstance(user_entries, dict):
+                raise ValueError("user_entries 必须是字典")
+            for entry_key, entry in user_entries.items():
+                # entry形如:
+                # "timezone": {
+                #     "key": "timezone",
+                #     "value": "Asia/Shanghai",
+                #     "tags": ["设置"]
+                # } 
+                # 校验 3: entry_key 不能是空白
+                if not entry_key.strip():
+                    raise ValueError("entry_key 不得为空白")
+                # # 校验 4: entry 必须是字典.       # 这个校验交给下面的MemoryEntry.model_validate()完成, 否则会抢先抛出valueerror
+                # if not isinstance(entry, dict):
+                #     raise ValueError("entry 必须是字典")
+                # 校验 5: entry 必须能够以严格 JSON 序列化.
+                json.dumps(entry, allow_nan=False)
 
+                # 应先进行 MemoryEntry 模型校验，再比较内外键。
+                # 这样字段缺失或类型错误会得到 ValidationError，内外键不一致才得到 ValueError。
+                
+                # 校验 6 :逐条构造 MemoryEntry
+                validated_entry = MemoryEntry.model_validate(entry)
+                # 校验 7: 外层 entry_key 必须等于validated_entry.key
+                if entry_key != validated_entry.key:
+                    raise ValueError("外层 entry_key 必须等于内层entry.key")
+
+        return entries_by_user
     def put(self, user_id: str, entry: MemoryEntry) -> None:
         """按用户和键保存或覆盖一条长期事实。
 
@@ -310,7 +384,37 @@ class JsonMemoryStore:
         首次插入位置，不同用户即使键相同也不能串写。
         """
 
-        raise NotImplementedError("TODO 9b：实现长期事实保存")
+        if not isinstance(user_id, str) or not user_id.strip():
+            raise ValueError("user_id should be a non-blank str.")
+
+        entries_by_user = self._read_all()
+        if user_id in entries_by_user:
+            # 用户已存在
+            entries = entries_by_user.get(user_id)
+            # "user-alice": {                 # user_id
+            #  entries形如:               
+            #     "favorite-color": {         # entry.key，同时也是第二层键
+            #         "key": "favorite-color",
+            #         "value": "蓝色",
+            #         "tags": ["偏好", "颜色"]
+            #     },
+            #     "timezone": {
+            #         "key": "timezone",
+            #         "value": "Asia/Shanghai",
+            #         "tags": ["设置"]
+            #     }
+            # },
+            entries[entry.key] = entry.model_dump()
+            
+
+        else:
+            # 用户不存在. 创建用户的记忆字典.
+            entries_by_user[user_id] = {
+                entry.key : entry.model_dump()
+            }
+        json.dumps(entries_by_user, allow_nan=False)
+        _write_json_atomic(self._path, entries_by_user)
+        return
 
     def get(self, user_id: str, key: str) -> MemoryEntry | None:
         """读取并校验一条长期事实，找不到时返回 ``None``。
@@ -319,8 +423,40 @@ class JsonMemoryStore:
         空对象或字段非法的记录必须让 ``MemoryEntry`` 校验报错。存储用的外层
         ``key`` 还必须等于记录内部 ``entry.key``，否则显式报错。
         """
+        if not isinstance(user_id, str) or not user_id.strip():
+            raise ValueError("user_id should be a non-blank str.")
+        if not isinstance(key, str) or not key.strip():
+            raise ValueError("key should be a non-blank str.")
 
-        raise NotImplementedError("TODO 9c：实现单条长期事实恢复")
+        entries_by_user = self._read_all()
+        if user_id in entries_by_user:
+            # user_id存在.
+            entries = entries_by_user.get(user_id)
+            # "user-alice": {                 # user_id
+            #  entries形如:               
+            #     "favorite-color": {         # entry.key，同时也是第二层键
+            #         "key": "favorite-color",
+            #         "value": "蓝色",
+            #         "tags": ["偏好", "颜色"]
+            #     },
+            #     "timezone": {
+            #         "key": "timezone",
+            #         "value": "Asia/Shanghai",
+            #         "tags": ["设置"]
+            #     }
+            # },
+            if key in entries:
+                # key存在
+                entry = entries[key]
+                if key != entry["key"]:
+                    raise ValueError("外层 key 不等于记录内部 entry.key ")
+                return MemoryEntry.model_validate(entry)
+            else:
+                # key不存在
+                return None
+        else:
+            # user_id不存在.
+            return None
 
     def list(self, user_id: str) -> list[MemoryEntry]:
         """按首次插入顺序返回指定用户的全部已校验事实。
@@ -329,5 +465,36 @@ class JsonMemoryStore:
         ``MemoryEntry`` 校验和内外 ``key`` 一致性检查。``get`` 与 ``list``
         对同一条损坏记录必须一致报错，不能由其中一条路径掩盖损坏。
         """
+        if not isinstance(user_id, str) or not user_id.strip():
+            raise ValueError("user_id should be a non-blank str.")
+        
+        entries_by_user = self._read_all()
+        memory_entry_list = []
+        if user_id in entries_by_user:
+            # user_id存在.
+            entries = entries_by_user.get(user_id)
+            # "user-alice": {                 # user_id                
+            #  entries形如:               
+            #     "favorite-color": {         # entry.key，同时也是第二层键
+            #         "key": "favorite-color",
+            #         "value": "蓝色",
+            #         "tags": ["偏好", "颜色"]
+            #     },
+            #     "timezone": {
+            #         "key": "timezone",
+            #         "value": "Asia/Shanghai",
+            #         "tags": ["设置"]
+            #     }
+            # },
+            for key, entry in entries.items():
+                # 应先进行 MemoryEntry 模型校验，再比较内外键。
+                # 这样字段缺失或类型错误会得到 ValidationError，内外键不一致才得到 ValueError。
+                memory_entry = MemoryEntry.model_validate(entry)
+                if key != memory_entry.key:
+                    raise ValueError("外层 key 不等于记录内部 entry.key ")
+                memory_entry_list.append(MemoryEntry.model_validate(entry))
+            return memory_entry_list
 
-        raise NotImplementedError("TODO 9d：实现长期事实列表恢复")
+        else:
+            # user_id不存在.
+            return []             
