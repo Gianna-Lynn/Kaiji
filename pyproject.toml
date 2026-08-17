@@ -24,5 +24,5 @@ where = ["src"]
 [tool.pytest.ini_options]
 pythonpath = ["src"]
 testpaths = ["tests"]
-addopts = "-q --basetemp=.kaiji-pytest-tmp"
-cache_dir = ".kaiji-pytest-cache"
+addopts = "-q --basetemp=.local-pytest-tmp"
+cache_dir = ".local-pytest-cache"
