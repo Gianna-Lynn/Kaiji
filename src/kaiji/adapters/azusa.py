@@ -3,12 +3,13 @@
 from __future__ import annotations
 
 import math
+import json
 from collections.abc import Callable
 from typing import Any, Protocol
 from urllib.parse import quote
 
 import httpx
-from pydantic import BaseModel, Field, StrictInt, StrictStr, field_validator
+from pydantic import BaseModel, Field, StrictInt, StrictStr, field_validator, model_validator, ConfigDict
 
 
 def _non_blank(value: object, field_name: str) -> str:
@@ -17,6 +18,16 @@ def _non_blank(value: object, field_name: str) -> str:
         raise ValueError(f"{field_name} 必须是非空且非纯空白字符串")
     return value
 
+
+def _finite_json(value: object) -> object:
+    """检查值是否可以被有限 JSON 表示，并原样返回合法值。"""
+    try:
+        json.dumps(value, allow_nan=False)
+        # float("nan")、float("inf")：JSON 不允许非有限数字，所以抛 ValueError
+        # object()：json.dumps只认识 JSON 规定的一族类型(dict/list/str/int/float/bool/None). 不知道如何把任意对象object()转换成 JSON，所以抛 TypeError
+    except (TypeError, ValueError) as exc:
+        raise ValueError("metadata 必须是有限 JSON") from exc
+    return value    # Pydantic 的字段校验器不仅负责检查，还会用返回值替换原字段. 校验成功就保留原值.
 
 class SearchHit(BaseModel):
     """表示一条由 Azusa 返回并可作为证据使用的检索命中. """
@@ -27,6 +38,9 @@ class SearchHit(BaseModel):
     source: str | None = None
     page: StrictInt | None = None
     metadata: dict[str, Any] = Field(default_factory=dict)
+    # 远端响应的模型外壳不得悄悄携带协议外字段；metadata 本身仍允许扩展，
+    # 因为它是由 Azusa 保留给业务元数据使用的 JSON 字典。
+    model_config = ConfigDict(extra="forbid")
 
     _valid_strings = field_validator("chunk_id", "text")(
         lambda value, info: _non_blank(value, info.field_name)
@@ -38,6 +52,10 @@ class SearchHit(BaseModel):
     # 原理: field_validator("chunk_id", "text") 先返回一个装饰器, 再立刻作用于 lambda
     # (函数体只有一行, 所以用匿名函数内联); 签名不带 cls 也可以, pydantic v2
     # 按函数签名决定传参. 名字以 _ 开头是私有约定, 不会被当成模型字段.
+
+    # metadata 虽然允许任意 JSON 结构，但必须能被有限 JSON 表示；只检查
+    # 最外层是 dict 不够，还要拒绝 NaN、Infinity 和不可序列化对象。
+    _valid_metadata = field_validator("metadata")(_finite_json)
 
     @field_validator("score", mode="before")
     @classmethod
@@ -52,6 +70,9 @@ class SearchResponse(BaseModel):
 
     hits: list[SearchHit]
     mode: StrictStr
+    # 远端响应的模型外壳不得悄悄携带协议外字段；metadata 等允许扩展的字段
+    # 仍由各自字段模型负责内部校验。
+    model_config = ConfigDict(extra="forbid")
 
     _valid_mode = field_validator("mode")(
         lambda value, info: _non_blank(value, info.field_name)
@@ -65,6 +86,19 @@ class SearchResponse(BaseModel):
     # 按函数签名决定传参. 名字以 _ 开头是私有约定, 不会被当成模型字段.
 
 
+    # 下面的装饰器和函数定义等价于 _valid_hits = model_validator(mode="after")(_valid_hits)
+    @model_validator(mode="after")  # mode="after"在整个hits组装完毕以后才开始校验. 这里不是field_validator, 因为field_validator一次只拿到一个字段的值, 看不到其他的元素.
+    def _valid_hits(self) -> "SearchResponse":
+        """保证 hits 中每条证据的 chunk_id 只出现一次。"""
+        # 引号表示: f 写在 SearchResponse 类体内部，定义时类还没"出生"，裸写 SearchResponse 会 NameError，
+        # 加引号变成字符串前向引用。不过本文件顶部有 from __future__ import annotations，
+        # 所有注解本来就自动变成惰性字符串，引号其实可省——写上更醒目也无妨
+        ids = [hit.chunk_id for hit in self.hits]
+        if len(ids) != len(set(ids)):
+            raise ValueError("hits 中不允许出现重复的 chunk_id")
+        return self  # mode="after" 的约定是二选一：要么 return self（通过），要么 raise（失败）。
+
+
 class ChunkResponse(BaseModel):
     """表示按稳定 chunk_id 取回的完整证据正文与元数据. """
 
@@ -73,6 +107,9 @@ class ChunkResponse(BaseModel):
     source: str | None = None
     page: StrictInt | None = None
     metadata: dict[str, Any] = Field(default_factory=dict)
+    # 远端响应的模型外壳不得悄悄携带协议外字段；metadata 本身仍允许扩展，
+    # 因为它是由 Azusa 保留给业务元数据使用的 JSON 字典。
+    model_config = ConfigDict(extra="forbid")
 
     _valid_strings = field_validator("chunk_id", "text")(
         lambda value, info: _non_blank(value, info.field_name)
@@ -85,6 +122,9 @@ class ChunkResponse(BaseModel):
     # (函数体只有一行, 所以用匿名函数内联); 签名不带 cls 也可以, pydantic v2
     # 按函数签名决定传参. 名字以 _ 开头是私有约定, 不会被当成模型字段.
 
+    # metadata 虽然允许任意 JSON 结构，但必须能被有限 JSON 表示；只检查
+    # 最外层是 dict 不够，还要拒绝 NaN、Infinity 和不可序列化对象。
+    _valid_metadata = field_validator("metadata")(_finite_json)
 
 class AzusaAdapterError(Exception):
     """表示适配器边界内的失败, 并保留是否适合重试. """
@@ -200,7 +240,12 @@ class AzusaHttpAdapter:
             # 若省略此行: 503 的 HTML 响应体会直接进 model_validate, JSON 解析失败抛
             # ValueError, 被误判为"响应格式不对, retryable=True".
             response.raise_for_status()
-            return SearchResponse.model_validate(response.json())
+            search_response = SearchResponse.model_validate(response.json())
+            # SearchResponse 只能验证响应自身的 mode 字段；请求中的 mode 属于
+            # Adapter 上下文，必须在模型校验后做请求与响应的跨边界一致性检查。
+            if search_response.mode != mode:
+                raise ValueError("search_response.mode 和 请求 mode 不一致")
+            return search_response
         except httpx.TimeoutException as exc:  # 网络超时. TimeoutException是RequestError的子类, 必须在RequestError的前面. 
             raise AzusaAdapterError(f"Azusa search timed out:{str(exc)}", retryable=True) from exc # retryable=True:可能是网络波动, 再试一次可能成功. from exc可以保持调用链, 允许报错的时候看到消息异常.
         except httpx.HTTPStatusError as exc:   # 服务器收到, 但报告请求本身有问题(4xx)
@@ -644,23 +689,35 @@ class MockAzusaAdapter:
     """提供无需网络、GPU 或真实 Azusa 服务的确定性检索结果. """
 
     def __init__(self, chunks: list[ChunkResponse] | None = None) -> None:
-        self._chunks = {
-            chunk.chunk_id: chunk
-            for chunk in (
-                chunks if chunks is not None else [
-                    ChunkResponse(
-                        chunk_id="kaiji-001",
-                        text="Kaiji owns tool, state, workflow, trace, and eval.",
-                        source="mock://kaiji",
-                    ),
-                    ChunkResponse(
-                        chunk_id="azusa-001",
-                        text="Azusa provides HNSW and RAG retrieval through adapters.",
-                        source="mock://azusa",
-                    ),
-                ]
-            )
-        }
+        source_chunks = (
+            chunks if chunks is not None else [
+                ChunkResponse(
+                    chunk_id="kaiji-001",
+                    text="Kaiji owns tool, state, workflow, trace, and eval.",
+                    source="mock://kaiji",
+                ),
+                ChunkResponse(
+                    chunk_id="azusa-001",
+                    text="Azusa provides HNSW and RAG retrieval through adapters.",
+                    source="mock://azusa",
+                ),
+            ]
+        )
+
+        # 不能直接用字典推导式索引 chunks；重复键会被后一个值静默覆盖，
+        # 使输入错误消失，无法满足 Mock 与远端证据相同的唯一 ID 契约。
+        seen_ids: set[str] = set()
+        indexed_chunks: dict[str, ChunkResponse] = {}
+
+        for chunk in source_chunks:
+            if chunk.chunk_id in seen_ids:
+                raise ValueError(
+                    f"chunks 中不允许出现重复的 chunk_id: {chunk.chunk_id}"
+                )
+            seen_ids.add(chunk.chunk_id)
+            indexed_chunks[chunk.chunk_id] = chunk
+
+        self._chunks = indexed_chunks
 
     def search_azusa(self, query: str, k: int, mode: str) -> SearchResponse:
         """用简单词项匹配搜索内存中的教学证据. """
