@@ -601,7 +601,8 @@ HTTP 5xx、timeout 和网络错误可能来自瞬时故障，因此标记为可�
 
 Legacy Adapter 只接受 `hnsw`，向 `/search` 发送 `vector`、`k` 和固定
 `ef_search=16`，再逐条读取 `/record/{id}`。它必须保留 `score/source/page`，从
-metadata 恢复 `chunk_id`，再用注入的 resolver 恢复正文。encoder 必须返回非空
+metadata 恢复 `chunk_id`，再用注入的 resolver 恢复正文。实际 Legacy 响应包含
+`vector`；Kaiji 不消费它，因此允许缺失，但存在时必须是有限数值列表。encoder 必须返回非空
 有限数值列表（允许 int/float，内部统一转成 float），其中元素必须有限且不能是布尔值；resolver 必须返回非空、非纯空白
 字符串。metadata 中的 `chunk_id` 同样必须是非空、非纯空白字符串，不能把任意对象用
 `str()` 强行伪装成标识。`record_id` 是兼容层保留字段，远端 metadata 已有该键时明确
@@ -991,3 +992,54 @@ python -m pytest -q -rs tests/test_azusa_live_integration.py
 
 学习时以本文件为主线；需要复制命令时看 curriculum，需要理解边界时看 architecture，
 需要比较框架时看 framework-comparison。
+
+
+## 8. 一点笔记
+
+### dump: 倾倒, 转储, 倾泻而出.
+
+下面是Pydantic模型的用法:
+model_dump()  返回 Python字典. 字典的值可能还是枚举对象, 或者其他合法的字典值.
+model_dump(mode="json") 返回 JSON兼容的Python字典. 字典的值已经被转换为JSON可以表示的类型.
+model_dump_json()  返回JSON字符串, 类型是str.
+model_dump(mode="json") 和 model_dump_json()都不是严格有限JSON校验, 可能把NaN序列化为null. 如果需要严格验证, 应该使用 json.dumps(..., allow_nan=False)
+
+下面是json库的用法:
+json.dump(data, file) 把JSON内容直接写入已经打开的文件. 这里的对象指的是"可以被转换成JSON的Python对象". 在Python中, dict, list, str等几乎都是对象.
+常见用法如下:
+```
+with open("data.json", "w", encoding="utf-8") as file:
+    json.dump(data, file)
+```
+json.dumps(Python对象)  dumps的-s表示string. json.dumps()接收Python对象, 返回JSON字符串, 类型是str.  
+json.dumps(Python对象, allow_nan=False) 明确禁止 NaN, Infinity 和 -Infinity
+
+下面是组合用法:
+record = TraceRecord(...)
+json.dumps(record) 是不可行的, 因为record是pydantic模型, 是自定义对象.
+json.dumps(record.model_dump(mode="json")) 可行
+record.model_dump_json() 可行.
+
+### validate:
+validate是 Pydantic 的用法. 用来: 检查外部输入, 转换成符合模型定义的Python对象.
+PydanticItem.model_validate(data)  把Python字典或Python对象转换成PydanticItem. 这个过程中会完成: 字段类型校验,字符串转换成枚举, 嵌套模型转换, Field约束检查, 和自定义model_validator的执行.
+PydanticItem.model_validate_json(data)  输入的是JSON字符串, 转成PydanticItem.
+PydanticItem.model_validate_strings(data)  输入的是一个字典, 字典中所有的值都是字符串. model_validate_strings会把这些字符串转换成目标类型.
+
+field_validator 只关注指定字段名(可以是一个或者多个字段), 如@field_validator("字段名", "另一个字段名"), 但是每次调用只处理当前的字段值. 通俗的说, 对于这些指定的字段一个一个去校验, 不关注这些字段之间的关系.
+
+model_validator 检查整个模型, 可以同时检查多个字段之间的关系.可以指定模型生成前/后校验, 如@model_validator(mode="after")
+
+### 文件
+一个Path对象, 形如 PathItem = Path("data/traces.jsonl")
+PathItem的父目录是 PathItem.parent
+若父目录不存在, 可以PathItem.parent.mkdir(parents=True, exist_ok=True)
+PathItem.exists() 判存在
+PathItem.stat().st_size() 判大小, 推断是不是空文件
+with self._path.open("a", encoding="utf-8") as file: "a" 是 append，追加模式. "w"是擦除重写.
+    ...with语句会自动完成close
+    file.write("要往里写入的内容")
+
+with self._path.open("rb") as file: "rb"是按二进制只读方式打开.
+    file.seek(-1, 2) # 以文件末尾（2 = os.SEEK_END）为基准，向后倒退 1 个字节（-1）, 把文件指针放在这里.
+    last_byte = file.read(1) # 读取文件指针开始的一个字节

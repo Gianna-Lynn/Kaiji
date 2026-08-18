@@ -210,7 +210,15 @@ class JsonCheckpointStore:
         json.dumps(checkpoints_by_thread, allow_nan=False)
         _write_json_atomic(self._path, checkpoints_by_thread)
         return
-
+    
+    @staticmethod
+    def _require_non_blank_str(value: object, *, name: str) -> str:
+        if not isinstance(value, str):
+            raise ValueError(f"{name} must be a non-blank str.")
+        if not value.strip():
+            raise ValueError(f"{name} must be a non-blank str.")
+        return value
+    
     def load(self, thread_id: str, checkpoint_id: str) -> Checkpoint | None:
         """读取指定检查点，找不到时返回 ``None``。
 
@@ -219,10 +227,8 @@ class JsonCheckpointStore:
         不能未经模型校验直接返回原始字典。
         """
 
-        if not thread_id.strip():
-            raise ValueError("thread_id should not be blank.")
-        if not checkpoint_id.strip():
-            raise ValueError("checkpoint_id should not be blank.")
+        thread_id = self._require_non_blank_str(thread_id, name="thread_id")
+        checkpoint_id = self._require_non_blank_str(checkpoint_id, name="checkpoint_id")
         
         checkpoints_by_thread = self._read_all()
         if thread_id in checkpoints_by_thread:
@@ -250,8 +256,7 @@ class JsonCheckpointStore:
         最后一个 ID，并重新构造 ``Checkpoint``。不得按 ID 排序猜测最新值。
         """
 
-        if not thread_id.strip():
-            raise ValueError("thread_id should not be blank.")
+        thread_id = self._require_non_blank_str(thread_id, name="thread_id")
 
         checkpoints_by_thread = self._read_all()
         if thread_id in checkpoints_by_thread:
@@ -492,7 +497,7 @@ class JsonMemoryStore:
                 memory_entry = MemoryEntry.model_validate(entry)
                 if key != memory_entry.key:
                     raise ValueError("外层 key 不等于记录内部 entry.key ")
-                memory_entry_list.append(MemoryEntry.model_validate(entry))
+                memory_entry_list.append(memory_entry)
             return memory_entry_list
 
         else:

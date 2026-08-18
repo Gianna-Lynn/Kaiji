@@ -1133,6 +1133,67 @@ def test_todo_7c_search_rejects_invalid_record_contract(
     assert caught.value.retryable
 
 
+@pytest.mark.parametrize(
+    ("vector_value", "include_vector", "expected_success"),
+    [
+        pytest.param(None, False, True, id="missing"),
+        pytest.param([1, 2.5], True, True, id="finite"),
+        pytest.param([True], True, False, id="bool"),
+        pytest.param([float("nan")], True, False, id="nan"),
+        pytest.param([float("inf")], True, False, id="infinity"),
+        pytest.param([object()], True, False, id="object"),
+        pytest.param([10**10000], True, False, id="overflowing-int"),
+    ],
+)
+def test_todo_7c_legacy_record_vector_is_optional_and_finite(
+    vector_value: object,
+    include_vector: bool,
+    expected_success: bool,
+    monkeypatch,
+) -> None:
+    """已知但不消费的 vector 可缺失；非法值在 resolver 前被拒绝。"""
+
+    record_payload: dict[str, object] = {
+        "id": 7,
+        "metadata": {"chunk_id": "c7"},
+    }
+    if include_vector:
+        record_payload["vector"] = vector_value
+
+    def response_json(response: httpx.Response) -> dict[str, object]:
+        if response.request.url.path == "/search":
+            return {"results": [{"id": 7, "score": 0.9}]}
+        return record_payload
+
+    monkeypatch.setattr(httpx.Response, "json", response_json)
+    resolver_calls = 0
+
+    def resolver(_: str) -> str:
+        nonlocal resolver_calls
+        resolver_calls += 1
+        return "正文"
+
+    adapter = LegacyAzusaVectorHttpAdapter(
+        "http://azusa.test",
+        query_encoder=lambda _: [1.0],
+        text_resolver=resolver,
+        transport=httpx.MockTransport(lambda _: httpx.Response(200)),
+    )
+    try:
+        if expected_success:
+            result = adapter.search_azusa("question", 1, "hnsw")
+            assert result.hits[0].text == "正文"
+            assert "vector" not in result.hits[0].metadata
+            assert resolver_calls == 1
+        else:
+            with pytest.raises(AzusaAdapterError) as caught:
+                adapter.search_azusa("question", 1, "hnsw")
+            assert caught.value.retryable is True
+            assert resolver_calls == 0
+    finally:
+        adapter.close()
+
+
 def test_todo_7c_encoder_exception_is_direct_and_non_retryable() -> None:
     def broken_encoder(query: str) -> list[float]:
         raise ValueError("encoder unavailable")

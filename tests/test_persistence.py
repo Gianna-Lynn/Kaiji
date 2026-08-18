@@ -300,7 +300,12 @@ def test_checkpoint_read_boundary_rejects_nonstandard_json_and_blank_keys(
     [
         ("load", (" ", "cp")),
         ("load", ("thread", " ")),
+        ("load", (None, "cp")),
+        ("load", ("thread", 7)),
+        ("load", (True, "cp")),
         ("latest", (" ",)),
+        ("latest", (None,)),
+        ("latest", (1,)),
     ],
 )
 def test_checkpoint_lookup_rejects_blank_identifiers(tmp_path, method, args) -> None:

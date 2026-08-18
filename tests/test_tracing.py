@@ -311,7 +311,7 @@ def test_trace_record_rejects_decreasing_steps() -> None:
 
 @pytest.mark.parametrize("bad", [float("nan"), float("inf"), object()])
 def test_trace_record_rejects_non_json_or_non_finite_payloads(bad) -> None:
-    with pytest.raises(ValidationError, match="有限 JSON"):
+    with pytest.raises(ValidationError, match="有限JSON"):
         TraceRecord(
             run_id="run-invalid-json-value",
             events=[TraceEvent(step=1, event="stop", data={"reason": "completed"})],

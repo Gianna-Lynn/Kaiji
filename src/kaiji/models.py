@@ -264,10 +264,17 @@ class TraceEvent(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
-    step: StrictInt = Field(ge=1)
+    step: StrictInt = Field(ge=1)   # ge=1 是greater or equal的缩写, 表示这个值必须满足大于等于 1 的约束
     event: Literal["model_action", "model_failure", "tool_result", "stop"]
     data: dict[str, Any]
 
+    @model_validator(mode="after")
+    def data_is_limited_json(self) -> TraceEvent:
+        try:
+            json.dumps(self.data, allow_nan=False)
+        except (ValueError, TypeError) as exc:
+            raise ValueError("不满足有限JSON, 存在nan/infinity/object")
+        return self
 
 class RunResult(BaseModel):
     """汇总一次 Agent 运行的回答、停止原因、证据、消息和 Trace。"""

@@ -158,7 +158,7 @@ class AzusaAdapter(Protocol):
 
 class _LegacySearchItem(BaseModel):
     """校验旧版 ``/search`` 中一条检索结果的必要字段. """
-
+    model_config=ConfigDict(extra="forbid")
     id: StrictInt | StrictStr
     score: int | float | None = None
 
@@ -179,14 +179,15 @@ class _LegacySearchItem(BaseModel):
 
 class _LegacySearchResponse(BaseModel):
     """校验旧版 ``/search`` 的响应外壳. """
-
+    model_config=ConfigDict(extra="forbid")
     results: list[_LegacySearchItem]
 
 
 class _LegacyRecordResponse(BaseModel):
-    """校验旧版 ``/record/{id}`` 中 Kaiji 依赖的元数据. """
-
+    """校验旧版 ``/record/{id}`` 的已知兼容字段。"""
+    model_config=ConfigDict(extra="forbid")
     id: StrictInt | StrictStr
+    vector: list[int | float] | None = None
     metadata: dict[str, Any]
 
     @field_validator("id")
@@ -194,6 +195,25 @@ class _LegacyRecordResponse(BaseModel):
     def id_is_valid(cls, value: object) -> object:
         if isinstance(value, str) and not value.strip():
             raise ValueError("id 不得为空或纯空白")
+        return value
+
+    @field_validator("vector", mode="before")
+    @classmethod
+    def vector_is_finite_when_present(cls, value: object) -> object:
+        """Legacy 响应允许返回 vector，但元素必须是有限数值。"""
+        if value is None:
+            return value
+        if not isinstance(value, list):
+            raise ValueError("Legacy vector 必须是有限数值列表")
+        for item in value:
+            if isinstance(item, bool) or not isinstance(item, (int, float)):
+                raise ValueError("Legacy vector 必须是有限数值列表")
+            try:
+                is_finite = math.isfinite(item)
+            except (TypeError, OverflowError):
+                is_finite = False
+            if not is_finite:
+                raise ValueError("Legacy vector 必须是有限数值列表")
         return value
 
 
@@ -255,7 +275,7 @@ class AzusaHttpAdapter:
                                     retryable=retryable, ) from exc   # 429 和 5xx 可重试; 3xx 与除 429 外的其他 4xx 不可重试. 因为请求的chunk_id不存在, 无论尝试多少次, 都是404
         except httpx.RequestError as exc:   # 请求根本没发出去, 或者发了一半断了(网线被拔了 / DNS 炸了 / 连接被拒). retryable=True: 换个时间发送, 可能成功.
             raise AzusaAdapterError(f"Azusa search returned RequestError: {str(exc)}", retryable= True) from exc
-        # HTTP收到了200 OK, 但是JSON解析失败, 或者字段类型不匹配:
+        # HTTP收到了200 OK, 但是JSON解析失败:
         except ValueError as exc:           # 不是合法的JSON
             raise AzusaAdapterError(f"Azusa search returned ValueError: {str(exc)}", retryable= True) from exc
         except TypeError as exc:            # 字段类型不匹配
@@ -273,13 +293,12 @@ class AzusaHttpAdapter:
 
         try:
             encoded_id = quote(chunk_id, safe="") # quote('abc def') -> 'abc%20def'
-            response = self._client.get(f"/chunks/{encoded_id}") # 把 chunk_id 当作单个 URL 路径段编码. safe="" 的意思是所有特殊字符都编码, 包括 / . 
+            response = self._client.get(f"/chunks/{encoded_id}") # 把 chunk_id 当作单个 URL 路径段编码. safe="" 的意思是所有特殊字符都编码, 包括 / (RFC 非保留字符如 -._~ 不会因此被编码)
                                                               # 因为 chunk_id 是整个路径段(形如"folder/chunk 1"), 里面的 / 不能当路径分隔符. 在
                                                               # 经过quote编码后, "/chunks/folder/chunk 1"被编码成f"/chunks/folder%2Fchunk%201", 
                                                               # 服务器明确知道chunks/ 后面整个 folder%2Fchunk%201 就是一个路径段, 解码后得到 folder/chunk 1
             response.raise_for_status()
             chunk = ChunkResponse.model_validate(response.json())
-            # TODO: 这样写raise可能会吞掉AzusaAdapterError吗?
             if chunk.chunk_id != chunk_id:
                 raise AzusaAdapterError(
                     f"Azusa chunk response ID {chunk.chunk_id!r} does not match requested {chunk_id!r}",
@@ -288,18 +307,18 @@ class AzusaHttpAdapter:
             return chunk
         
         except httpx.TimeoutException as exc:
-            raise AzusaAdapterError(f"Azusa search timed out:{str(exc)}", retryable=True) from exc
+            raise AzusaAdapterError(f"Azusa get chunk timed out:{str(exc)}", retryable=True) from exc
         except httpx.HTTPStatusError as exc:
             status_code = exc.response.status_code
             retryable = status_code == 429 or status_code >= 500
-            raise AzusaAdapterError(f"Azusa search returned HTTP {status_code}", 
+            raise AzusaAdapterError(f"Azusa get chunk returned HTTP {status_code}", 
                                     retryable=retryable) from exc
         except httpx.RequestError as exc:
-            raise AzusaAdapterError(f"Azusa search returned RequestError: {str(exc)}", retryable= True) from exc
+            raise AzusaAdapterError(f"Azusa get chunk returned RequestError: {str(exc)}", retryable= True) from exc
         except ValueError as exc:
-            raise AzusaAdapterError(f"Azusa search returned ValueError: {str(exc)}", retryable= True) from exc
+            raise AzusaAdapterError(f"Azusa get chunk returned ValueError: {str(exc)}", retryable= True) from exc
         except TypeError as exc:
-            raise AzusaAdapterError(f"Azusa search returned TypeError: {str(exc)}", retryable= True) from exc
+            raise AzusaAdapterError(f"Azusa get chunk returned TypeError: {str(exc)}", retryable= True) from exc
 
     def close(self) -> None:
         """关闭底层 HTTP 客户端连接池. """
@@ -341,7 +360,7 @@ class LegacyAzusaVectorHttpAdapter:
         背景:
         resolve: 解析; resolver: 解析器.
         Azusa的旧Rust服务一共只有两个端点: POST /search, 返回record ID和分数; 
-        GET /record/{id}, 返回record ID和metadata字典.
+        GET /record/{id}, 返回record ID、vector和metadata字典.
         注意 metadata 分两层看待:
         - 契约层: 代码里是 dict[str, Any], 即不保证任何固定字段, 只有这一条是契约;
           adapter 契约上只依赖 chunk_id 非空、非纯空白.
@@ -451,7 +470,7 @@ class LegacyAzusaVectorHttpAdapter:
 
         背景:
         Azusa的旧Rust服务一共只有两个端点: POST /search, 只接收向量,
-        返回record ID和分数; GET /record/{id}, 返回record ID和metadata字典.
+        返回record ID和分数; GET /record/{id}, 返回record ID、vector和metadata字典.
         服务端不保存正文, 也不能处理文本 query, 所以完整的语义检索要靠拼装:
         encoder 把文本变向量, resolver 从本地补正文. 本函数就是拼装全流程的
         入口, 把旧服务的"半残"输出恢复成 Kaiji 的 SearchResponse.
@@ -558,7 +577,7 @@ class LegacyAzusaVectorHttpAdapter:
                 record_resp = self._client.get(f"/record/{encoded_id}")
                 record_resp.raise_for_status()
                 record = _LegacyRecordResponse.model_validate(record_resp.json())
-                # 数据结构说明: _LegacyRecordResponse 是 Pydantic 模型, 不是 dict; 字段: id: StrictInt | StrictStr, metadata: dict[str, Any]
+                # 数据结构说明: _LegacyRecordResponse 是 Pydantic 模型, 不是 dict; 字段包括 id、可选 vector 和 metadata.
                 # 校验完毕后, record 是一个 _LegacyRecordResponse 实例, 形如:
                 # record = {
                 #     "id": 7,
