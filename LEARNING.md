@@ -39,11 +39,12 @@ get_chunk_by_id(chunk_id)
 - Pydantic 数据模型、目录结构、Mock、Demo 与测试框架；
 - Kaiji 和 Azusa 的完整标准答案分支；
 - 不依赖 API key、GPU 或在线服务的离线验证路径；
-- 默认不阻塞离线测试、但 TODO 12 必须实际完成的 Azusa BM25 HTTP 联调路径。
+- 默认不阻塞离线测试、但 TODO 12 必须实际完成的 Azusa BM25 HTTP 联调路径；
+- TODO 13—15 的 Provider、Eval 与可靠性实验课程脚手架、受控 fixture 和离线验收路径。
 
 人需要完成：
 
-- `main` 中标记为 `TODO 1`—`TODO 12` 的关键逻辑；
+- `main` 中标记为 `TODO 1`—`TODO 15` 的关键逻辑；
 - 每完成一课，运行对应窄测试；
 - 在看答案前，先解释自己的设计和失败边界；
 - 最后完成 Kaiji 与 Azusa 的真实跨仓库验收。
@@ -57,7 +58,7 @@ Kaiji：
 | 分支 | 用途 |
 |---|---|
 | `main` | 人实际写 TODO 的练习分支 |
-| `solution/kaiji-v0-full-course` | 12 课完整答案与真实 Azusa 集成 |
+| `solution/kaiji-v0-full-course` | 第一批 TODO 1—12 的完整答案与真实 Azusa 集成；第二批课程的答案边界见 `docs/` |
 
 Azusa：
 
@@ -112,8 +113,8 @@ python -m kaiji.demo
 
 ## 5. 推荐学习路线
 
-课程被分成四站。必须按顺序前进，因为后面的 Adapter、Workflow 和 Eval 都依赖前面的
-工具执行语义。
+课程被分成五站。必须按顺序前进，因为后面的 Adapter、Workflow、Eval 和可靠性实验都
+依赖前面的工具执行语义。
 
 ### 第一站：亲手建立可靠的原生 Tool Agent
 
@@ -820,17 +821,6 @@ runner 必须按下表把运行事实统一映射为 Observation，不能到写�
 | `latency_ms` | runner 接受 case 到得到终止结果的墙钟毫秒，包含 Adapter 和内部重试时间 |
 | `citation_supported` | 所有引用均来自成功且校验过的证据，并实际支持回答；不适用为 `None` |
 
-TODO14 的 `required_answer_facts` 使用 NFKC、大小写折叠和连续空白折叠后的连续
-字面量匹配；事实两端的 ASCII 字母、数字或下划线不能与回答中的同类 ASCII 字符
-相邻，因此 `90` 不匹配 `190`；CJK 字符不参与该西文标识边界。它不做语义蕴含、
-否定识别、同义词、翻译或数值等价判断。
-Native TODO14 的 `retry_recovered` 只观察 `ToolResult.attempts` 统计 Executor
-retry；TODO11 的 query rewrite 读取自己的 `retry_count`/`step_count`，Provider
-transport retry 不计入该业务指标。
-
-因此 `selected_tool` 非空而 `tool_calls=0` 并不矛盾：模型可能选了工具，但参数 Schema
-在 handler 前拒绝了它。`tool_calls` 不是 Message 数，也不是模型 action 数。
-
 覆盖契约要求 case ID 和 observation ID 各自唯一，而且两边集合完全相等。适用指标的
 观测值如果为 `None`，按失败计入既定分母，不能静默缩小分母。分母固定为：
 
@@ -936,6 +926,150 @@ python -m pytest -q -rs tests/test_azusa_live_integration.py
 Remove-Item Env:AZUSA_GATEWAY_URL
 ```
 
+### 第五站：把 Eval 做成可复现的可靠性实验
+
+TODO 13—15 是第一批课程之后的第二批训练。它们不是把 TODO 1—12 的功能机械重写
+一遍，而是逐步撤掉脚手架：TODO13 练 Provider 协议边界，TODO14 练 Runner、Scorer
+和 SQLite 生命周期，TODO15 练完整的故障对照、恢复和实验产物。三课默认都走离线
+Mock/Scripted 路径，不读取 API key，也不能把替身结果描述成真实模型成绩。
+
+详细的公开契约、非目标、字段追踪和反向验收记录分别见：
+`docs/reliability-course-l1-l3.md`、`docs/reliability-eval-contract.md`、
+`docs/reliability-eval-traceability.md` 和 `docs/reliability-course-validation.md`。
+本节给出主线上的学习目标、依赖顺序和验收入口；如果本节与详细契约出现冲突，以
+详细契约和测试中的明确边界为准，并应先修正文档冲突再继续实现。
+
+#### TODO 13：Provider 协议边界
+
+##### 这是什么，为什么需要它
+
+Provider 是模型服务与 Kaiji Runtime 之间的协议边界：它把 System Prompt、完整消息历史
+和工具 Schema 变成一次请求，再把服务响应解析成严格的 assistant 文本或单个工具动作。
+本课的输入是 Kaiji 的消息、工具定义和 Provider 配置，输出是可供 Runtime 消费的成功
+结果或结构化 Provider 失败；Provider 自己不得隐藏重试，也不得把鉴权信息带入请求记录、
+Trace 或错误文本。
+
+本课只实现 `src/kaiji/providers/openai_compatible.py` 已给出的接口，不新增 Provider
+抽象，不做并行工具调用、流式协议、真实模型回归或服务压测。关键不变量是：每个模型回合
+最多一个工具调用；assistant 工具调用后必须紧跟同 `tool_call_id`、同工具名的 tool
+结果；关键字段严格校验；非法 JSON、非有限数值、协议错配和空白最终回答不得进入成功路径。
+
+练习按依赖顺序实现：**13a 请求载荷 → 13b 消息与调用 ID 配对 → 13c 响应解析 →
+13d 请求元数据与失败分类**。13d 还必须明确区分 timeout、transport、429、5xx、其他
+4xx、非法 JSON 和非法协议，并只将前四类标记为可重试；真正的重试预算由上层实验控制。
+
+```powershell
+python -m pytest tests/test_openai_compatible_provider.py -k todo_13a
+python -m pytest tests/test_openai_compatible_provider.py -k todo_13b
+python -m pytest tests/test_openai_compatible_provider.py -k todo_13c
+python -m pytest tests/test_openai_compatible_provider.py -k todo_13d
+python -m pytest tests/test_openai_compatible_provider.py
+```
+
+完成后，人应能解释：为什么 Provider 只能报告“可重试”，而不能自行再次发送请求？
+为什么兼容扩展字段可以忽略，但会被 Kaiji 消费的动作字段不能依赖隐式类型转换？
+
+#### TODO 14：Runner、Scorer 与 SQLite
+
+##### 这是什么，为什么需要它
+
+TODO14 把一次真实 Runtime 运行封装成可评分的 Episode，并把 Runner、确定性 Scorer 和
+官方 SQLite Checkpointer 的生命周期接起来。输入是固定 Case、Provider/Executor 工厂
+和运行配置；输出是保存未经裁剪的 `RunResult`、模型调用元数据、评分结果以及可跨新连接
+恢复的 Checkpoint。Runner 不能用自己的 `task_success` 自报成功，Scorer 必须从动作、
+参数、回答、停止原因和成功证据重新计算。
+
+本课必须为每个 case 隔离 Provider、Registry 和故障状态；`repeat_index` 只能是真正的
+非负 `int`；每个 Episode 有唯一 `run_id`，并保留墙钟延迟。`max_steps` 和 duplicate
+guard 来自 Case/Harness 契约，不能被 Runner 偷换成无限循环或隐式默认值。
+
+`required_answer_facts` 只做确定性的字面量检查：回答和事实分别经过 NFKC、大小写折叠
+和连续空白折叠后，事实必须作为连续片段出现；事实两端若为 ASCII 字母、数字或下划线，
+不能与回答中的同类 ASCII 字符相邻，所以 `90` 不匹配 `190`，CJK 字符不参与该边界。
+它不做语义蕴含、否定识别、同义词、翻译或数值等价判断；空白事实和重复事实在 Case
+构造时拒绝。
+
+`selected_tool` 表示模型第一次选择的工具，即使参数在 handler 前被拒也应记录；
+`tool_calls` 只表示实际进入 handler 的执行尝试数，因此 `selected_tool` 非空而
+`tool_calls=0` 并不矛盾。它不是 Message 数，也不是模型 action 数。`retry_recovered`
+在 Native 中只观察同一工具调用内 `ToolResult.attempts` 体现的 Executor retry；LangGraph
+的 query rewrite 读取自己的 `retry_count`/`step_count`；Provider transport retry
+属于传输可靠性，不计入该业务恢复指标。
+
+聚合前必须校验 case ID、observation ID、`run_id` 唯一，并按 ID 完全对齐；输入顺序不
+承担身份语义。缺失 observation 不能缩小分母，适用指标为 `None` 时按既定失败口径处理，
+没有适用项时报告 `0.0`。Tool Success、Citation Precision/Recall、Steps、Token、延迟、
+停止原因和失败分布都必须使用文档规定的固定分母与 nearest-rank P50/P95。
+
+SQLite 部分只实现官方同步 Saver 的正确生命周期：创建父目录、上下文退出关闭连接、
+关闭第一个 Graph/连接后仍能由新 Graph/连接按同一 `thread_id` 恢复，并拒绝旧 Schema、
+非真正 Python `bool` 审批值和跨线程状态泄漏。它不做分布式 Checkpoint 或并发写入。
+
+练习按依赖顺序实现：**14a 隔离 Runtime Episode → 14b 单条确定性评分 → 14c 固定分母
+聚合 → 14d 官方 SQLite Checkpointer**。
+
+```powershell
+python -m pytest tests/test_eval_runner.py -k todo_14a
+python -m pytest tests/test_eval_scorer.py -k todo_14b
+python -m pytest tests/test_eval_scorer.py -k todo_14c
+python -m pytest tests/test_sqlite_checkpoint_resume.py -k todo_14d
+python -m pytest tests/test_eval_runner.py tests/test_eval_scorer.py tests/test_sqlite_checkpoint_resume.py
+```
+
+完成后，人应能解释：为什么 Runner 的成功声明不能替代 Scorer？为什么一次参数预校验
+失败可以留下工具选择，却不能增加 `tool_calls`？为什么 Provider 第一次网络失败不能
+单独让 Episode 通过恢复评分？
+
+#### TODO 15：Reliability Experiment
+
+##### 这是什么，为什么需要它
+
+TODO15 将固定数据、故障注入、Harness、Checkpoint 恢复和报告产物组织成一次可复现的
+实验。输入是冻结的数据集、配置、Provider、重复次数和请求预算；输出是带 Manifest、
+Episode JSONL、报告、坏案例和恢复账本的实验目录。L3 不预先规定内部类和辅助函数，
+但必须保留状态不变量、故障边界和可审计产物。
+
+四个 Harness 只能切换一次有界 retry 和 duplicate guard，其他 Schema、Prompt、Provider、
+数据、温度、最大步骤和重复次数必须相同：
+
+| Harness | Retry | Duplicate guard |
+|---|---:|---:|
+| `bounded_baseline` | 关 | 关 |
+| `no_retry` | 关 | 开 |
+| `no_duplicate_guard` | 开 | 关 |
+| `full_kaiji` | 开 | 开 |
+
+练习按依赖顺序实现：**15a 受控 Harness → 15b 实验矩阵与产物 → 15c Harness Ablation →
+15d 可恢复 Formal**。
+
+- 15a 必须保持所有实验有界，只允许切换上述两个机制。
+- 15b 必须执行完整 `case × repeat` 矩阵，冻结数据/配置 hash，写出
+  `episodes.jsonl`、`report.json`、`report.md` 和 `bad_cases.json`；已有实验目录不得覆盖。
+  普通 Experiment 失败时不生成可被误读为正式成绩的 `incomplete` 报告。
+- 15c 必须在相同输入下比较四组成功率、恢复率、Steps 和延迟，并解释 retry、重复调用
+  保护及正常路径开销分别改变了什么。
+- 15d 每条 Episode 立即追加到 flush/fsync 的 hash-chain JSONL；恢复以
+  `(case_id, repeat_index)` 为唯一坐标，只能跳过已完成坐标。每次真实请求先记
+  `started`，响应后记 Token；未决请求必须阻断自动恢复。完整报告要求
+  `requests_started == responses_finished`，部分报告不得聚合；hash 链只能检测未被重算
+  的损坏，不能证明真实性或作者身份。
+
+普通练习最后运行：
+
+```powershell
+python -m pytest tests/test_harnesses.py -k todo_15a
+python -m pytest tests/test_experiment.py -k todo_15b
+python -m pytest tests/test_experiment.py -k todo_15c
+python -m pytest tests/test_formal_runner.py -k todo_15d
+python -m pytest tests/test_experiment.py tests/test_harnesses.py tests/test_formal_runner.py
+python -m kaiji.experiment --provider scripted --suite smoke
+python -m kaiji.experiment --provider scripted --suite reliability
+```
+
+真实 DeepSeek Formal 与 Azusa Live 不属于普通练习回归。只有人在完成全部离线题后，另行
+明确凭据、请求、费用和数据发送授权，才可以运行它们；Scripted/Mock 的成绩只能证明
+数据、动作、恢复和评分管线自洽，不能表述为真实模型或开放域 Benchmark 成绩。
+
 ## 6. 最终验收
 
 Kaiji：
@@ -945,6 +1079,17 @@ Set-Location F:\Repositories\Kaiji
 python -m pytest -rs
 python -m kaiji.course_demo
 python -m kaiji.eval_demo
+```
+
+第二批 Reliability Eval 的离线验收：
+
+```powershell
+Set-Location F:\Repositories\Kaiji
+python -m pytest tests/test_openai_compatible_provider.py
+python -m pytest tests/test_eval_runner.py tests/test_eval_scorer.py tests/test_sqlite_checkpoint_resume.py
+python -m pytest tests/test_harnesses.py tests/test_experiment.py tests/test_formal_runner.py
+python -m kaiji.experiment --provider scripted --suite smoke
+python -m kaiji.experiment --provider scripted --suite reliability
 ```
 
 Azusa 练习分支：
@@ -976,6 +1121,9 @@ python -m pytest -q -rs tests/test_azusa_live_integration.py
 6. Kaiji 为什么只依赖 AzusaAdapter？
 7. 失败工具结果为什么不能进入引用？
 8. Eval 中各指标的分母是什么？
+9. Provider 为什么不能隐藏网络重试，实验账本又为什么必须记录每次请求？
+10. Runner、Scorer、Checkpoint 和 Formal ledger 分别负责什么，哪些状态不能跨 case 或跨线程泄漏？
+11. 为什么 Scripted/Mock Formal 的成绩不能表述为真实模型成绩？
 
 ## 7. 下钻资料
 

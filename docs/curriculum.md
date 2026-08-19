@@ -106,7 +106,17 @@ Checkpoint、Interrupt、`Command(resume=...)` 和所有终止路径。这里的
 计算；不得用全为满分的样例掩盖错误公式。当前 `reference_observation()` 是聚合器金标，
 不是 20 条真实 Agent 行为回归；真实 runner 必须另行提供观测。
 
-## 7. TODO 与验收入口
+## 7. Reliability Eval
+
+代码：`providers/openai_compatible.py`、`eval_runner.py`、`eval_scorer.py`、
+`experiment.py`、`formal_runner.py` 和相关测试。
+
+这是 TODO 1—12 之后的第二批课程，按 L1 Provider、L2 Runner/Scorer/SQLite、L3
+Reliability Experiment 逐步撤除工程脚手架。详细字段契约、非目标、失败边界和直接测试
+追踪见 `docs/reliability-course-l1-l3.md`、`docs/reliability-eval-contract.md` 和
+`docs/reliability-eval-traceability.md`；主学习顺序和完成定义见 `LEARNING.md`。
+
+## 8. TODO 与验收入口
 
 每完成一行，该行测试应能独立转绿；最后再执行全量测试与两个 Demo。
 
@@ -124,3 +134,10 @@ Checkpoint、Interrupt、`Command(resume=...)` 和所有终止路径。这里的
 | 10 | JSONL Trace、唯一 run_id 与稳定 replay | `pytest tests/test_tracing.py` |
 | 11 | Eval 对齐、混合样例与指标公式 | `pytest tests/test_evaluation.py` |
 | 12 | 真实 Azusa 跨仓库闭环 | `pytest -q -rs tests/test_azusa_live_integration.py` |
+| 13a—13d | OpenAI-compatible Provider 协议边界 | `pytest tests/test_openai_compatible_provider.py` |
+| 14a | 隔离 Runtime Episode | `pytest tests/test_eval_runner.py -k todo_14a` |
+| 14b—14c | 确定性评分与固定分母聚合 | `pytest tests/test_eval_scorer.py` |
+| 14d | 官方 SQLite Checkpointer 恢复 | `pytest tests/test_sqlite_checkpoint_resume.py` |
+| 15a | 受控 Reliability Harness | `pytest tests/test_harnesses.py -k todo_15a` |
+| 15b—15c | 实验矩阵、产物与 Ablation | `pytest tests/test_experiment.py` |
+| 15d | 可恢复 Formal 实验 | `pytest tests/test_formal_runner.py` |

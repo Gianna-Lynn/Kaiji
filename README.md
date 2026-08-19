@@ -1,8 +1,9 @@
 # Kaiji
+Kaiji (かいじ) 是 JR 东日本中央本线(特急)甲斐路号列车的英文名. 甲斐路号列车往返于新宿和甲府. 同属于中央本线(特急)的 Azusa (あずさ) 梓号列车往返于新宿和松本.
 
 Kaiji 是 Azusa 之上的独立 Agent 应用工程项目。它不重新实现 HNSW 或 RAG，而是通过工具适配器调用 Azusa，学习并实现可靠的单 Agent Runtime。
 
-Kaiji 的核心对象是 Message、Tool、AgentState、Workflow、Checkpoint、Trace 和 Eval Case。当前课程已经搭建到 TODO 12：`main` 保留练习代码，`solution/kaiji-v0-full-course` 保存经过验证的完整参考实现。
+Kaiji 的核心对象是 Message、Tool、AgentState、Workflow、Checkpoint、Trace 和 Eval Case。当前课程主线已接到 TODO 15：`main` 保留练习代码，`solution/kaiji-v0-full-course` 保存第一批 TODO 1—12 的完整参考实现，第二批 Reliability Eval 的答案边界与验证记录见 `docs/`。
 
 ## 项目关系
 
@@ -46,9 +47,9 @@ Azusa 提供检索与证据能力；Kaiji 负责工具选择、状态推进、�
   - README、架构图、状态图、对照报告、Bad Case、面试问答
   - 有余力再做 FastAPI 与 Docker Compose
 
-## 后续能力拓展：L1—L3 脚手架等级
+## 第二批课程：Reliability Eval v0.2
 
-Kaiji 在完成当前课程后，新增能力采用逐步撤除脚手架的三级训练制。这里的 L1—L3
+Kaiji 的第二批课程采用逐步撤除脚手架的三级训练制。这里的 L1—L3
 表示学习任务提供多少工程脚手架，不是功能版本、能力高低评级，也与 SAE 自动驾驶
 分级无关。
 
