@@ -289,6 +289,16 @@ def test_todo_11b_unique_index_isolated_from_alignment_and_metrics() -> None:
         )
 
 
+def test_todo_11b_unique_index_reports_all_duplicate_ids_in_sorted_order() -> None:
+    """11b 必须完整收集乱序输入中的重复 ID，并稳定排序报告。"""
+
+    with pytest.raises(ValueError, match=r"重复项: a, z"):
+        evaluation_module._index_by_unique_case_id(
+            [make_case("z"), make_case("z"), make_case("a"), make_case("a")],
+            "评测用例",
+        )
+
+
 def test_todo_11d_alignment_isolated_from_metric_formulas() -> None:
     """TODO 11d 只验证覆盖并恢复 case 顺序，不计算任何比率。"""
 
@@ -357,6 +367,17 @@ def test_todo_11c_load_cases_rejects_duplicate_ids(tmp_path) -> None:
     )
 
     with pytest.raises(ValueError, match="评测用例.*case-1"):
+        load_cases(path)
+
+
+def test_todo_11c_load_cases_reports_all_duplicate_ids_in_sorted_order(tmp_path) -> None:
+    """11c 必须复用 11b 的统一唯一性错误语义。"""
+
+    path = tmp_path / "duplicate-cases.jsonl"
+    cases = [make_case(case_id).model_dump_json() for case_id in ["z", "z", "a", "a"]]
+    path.write_text("\n".join(cases), encoding="utf-8")
+
+    with pytest.raises(ValueError, match=r"评测用例.*重复项: a, z"):
         load_cases(path)
 
 

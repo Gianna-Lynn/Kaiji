@@ -72,11 +72,15 @@ class EvalObservation(BaseModel):
     - ``retry_recovered`` 表示 Executor retry 或 query rewrite 之后最终恢复到
       预期结果；Provider 的 transport retry 属于请求可靠性，不计入该业务指标；
       不适用时为 ``None``。
-    - ``steps`` 是状态机消耗的逻辑迭代：Native 使用 ``RunResult.steps``，
-      检索图使用 ``step_count``，不经过检索的终止流程也至少记 1 步。
+    - ``steps`` 表示本次 case 的循环轮数。它统计的是 Agent 从开始执行到
+        结束所经历的决策/执行轮次，不等于工具调用次数。Native runner 直接用
+        ``RunResult.steps``，图式 runner 使用 ``step_count``；不经过检索的短流程
+        也至少记 1。
     - ``latency_ms`` 从 runner 开始执行该 case 到产生终止结果，采用墙钟时间。
     - ``unnecessary_tool_calls`` 只统计上述实际尝试中，按 case 判据本不需要的
-      次数；它不能超过 ``tool_calls``。
+      次数；它不能超过 ``tool_calls``。错误的约定: successful_tool_calls + 
+      unnecessary_tool_calls == tool_calls. 因为可能重叠: 一次工具调用既可能成功，
+      又可能是不必要的。
     - ``citation_supported`` 只有在引用均来自成功且经过校验的工具证据，并且
       证据支持回答中的相关表述时才为真；不要求引用的 case 使用 ``None``。
     """
@@ -117,15 +121,68 @@ class EvalObservation(BaseModel):
     @model_validator(mode="after")
     def call_counts_are_consistent(self) -> EvalObservation:
         """确保成功调用和无用调用都不会超过总调用数。"""
-        # TODO 11a：补全所有跨字段不变量。Field 只负责单字段下界；这里必须
+        # TODO 11a：在多个字段之间进行联合校验。Field 只负责单字段下界；这里必须
         # 直接拒绝成功/无用调用数超过总尝试、没有工具却评价参数、一次尝试却
         # 声称重试恢复，以及没有成功证据却声称引用受支持。合法时返回 self。
+
+        # 拒绝成功/无用调用数超过总尝试
+        if self.successful_tool_calls > self.tool_calls:
+            raise ValueError("成功调用数超过总尝试")
+        if self.unnecessary_tool_calls > self.tool_calls:
+            raise ValueError("无用调用数超过总尝试")
+
+        # 拒绝没有工具却评价参数
+        if self.selected_tool is None and self.arguments_correct is not None:
+            raise ValueError("没有选择工具时不能评价参数")
+
+        # 拒绝一次尝试却声称重试恢复
+        if self.tool_calls <= 1 and self.retry_recovered is True:
+            raise ValueError("一次尝试却声称重试恢复")
+
+        # 拒绝没有成功证据却声称引用受支持
+        if self.successful_tool_calls == 0 and self.citation_supported:
+            # 没有任何成功且通过输出校验的工具调用 -> 没有成功证据.
+            raise ValueError("没有成功证据却声称引用受支持")
+
         return self
 
 
 class EvalReport(BaseModel):
-    """汇总整套评测的可靠性、效率、延迟和引用指标。"""
+    """汇总整套评测的可靠性、效率、延迟和引用指标。
 
+    报告中的比例字段均为 ``0.0`` 到 ``1.0`` 之间的小数，而不是百分数；
+    例如 ``0.8`` 表示百分之八十。所有比例都基于已经通过 case/observation
+    身份对齐的完整数据计算，不能通过省略观测来缩小分母。
+
+    字段含义如下：
+
+    - ``case_count``：本次评测包含的用例总数，也是任务成功率和停止原因
+        分布使用的基础总数。
+    - ``task_success_rate``：任务结果正确，且停止原因和工具调用上限也符合
+        用例要求的用例占全部用例的比例。
+    - ``tool_selection_accuracy``：在声明了 ``expected_tool`` 的用例中，
+        第一次选择的工具名与期望工具一致的比例。不要求工具的用例不进入分母。
+    - ``argument_accuracy``：在声明了 ``expected_tool`` 的用例中，工具参数
+        被判定为正确的比例；参数为 ``None`` 按失败计入分母。
+    - ``tool_success_rate``：实际工具执行尝试中，成功完成且输出通过校验的
+        调用占全部实际尝试的比例。没有实际尝试时为 ``0.0``。
+    - ``retry_recovery_rate``：明确要求重试恢复的用例中，最终通过重试或
+        query rewrite 恢复到预期结果的比例；不要求该能力的用例不进入分母。
+    - ``unnecessary_tool_call_rate``：实际工具调用中被判定为不必要的调用
+        所占比例；不必要调用与成功调用可以同时计入，不能将两者视为互斥分类。
+    - ``average_steps``：每条用例 Agent 循环轮数的算术平均值；它表示决策
+        或执行轮次，不等于工具调用次数。
+    - ``p50_latency_ms``：延迟的第 50 百分位，即中位数附近的耗时，单位为
+        毫秒。
+    - ``p95_latency_ms``：延迟的第 95 百分位，单位为毫秒，用于观察较慢的
+        长尾请求。
+    - ``stop_reason_distribution``：按停止原因统计用例数量的映射；键是
+        ``StopReason`` 的字符串值，值是对应数量。各数量之和应等于
+        ``case_count``。
+    - ``citation_supported_rate``：明确要求引用支持的用例中，引用确实来自
+        成功且通过校验的工具证据、并且证据支持相关回答的比例；不要求引用的
+        用例不进入分母，声明支持为 ``None`` 或 ``False`` 按失败计入分母。
+    """
     case_count: int
     task_success_rate: float
     tool_selection_accuracy: float
@@ -147,11 +204,27 @@ def _index_by_unique_case_id(
     items: list[EvalItem],
     label: str,
 ) -> dict[str, EvalItem]:
-    """按 ``case_id`` 建立索引，并显式报告重复标识。"""
+    """
+    把一组 EvalCase 或 EvalObservation 按 case_id 建成一个查找表。
+    如果存在重复的 case_id，收集并稳定报告全部重复项，避免新的
+    EvalCase/EvalObservation 覆盖旧值。
+    """
 
     # TODO 11b：建立唯一索引并显式报告排序后的重复 ID。不能使用会让后值
     # 静默覆盖前值的字典推导。
-    return {item.case_id: item for item in items}
+    seen_case_ids: set[str] = set()
+    duplicate_case_ids: set[str] = set()
+    caseid_evalitem_dict: dict[str, EvalItem] = {}
+    for item in items:
+        if item.case_id in seen_case_ids:
+            duplicate_case_ids.add(item.case_id)
+        else:
+            seen_case_ids.add(item.case_id)
+            caseid_evalitem_dict[item.case_id] = item
+    if duplicate_case_ids:
+        duplicate_ids = ", ".join(sorted(duplicate_case_ids))
+        raise ValueError(f"{label}的 case_id 必须唯一. 重复项: {duplicate_ids}")
+    return caseid_evalitem_dict
 
 
 def load_cases(path: Path) -> list[EvalCase]:
@@ -163,14 +236,17 @@ def load_cases(path: Path) -> list[EvalCase]:
         if line.strip()
     ]
     # TODO 11c：调用统一唯一性检查；成功后仍按文件顺序返回 cases。
+    _index_by_unique_case_id(cases, "评测用例")
     return cases
 
 
 def _rate(values: list[bool]) -> float:
+    """计算一组布尔值的成功率"""
     return sum(values) / len(values) if values else 0.0
 
 
 def _percentile(values: list[float], percentile: float) -> float:
+    """计算一组数的百分位数. percentile=0.5时, 表示求P50; percentile=0.95时, 表示求P95"""
     if not values:
         return 0.0
     ordered = sorted(values)
@@ -186,7 +262,21 @@ def _align_observations(
 
     # TODO 11d：分别建立唯一索引，检查两侧 ID 集合完全相等，并按 cases
     # 的原始顺序返回观测。缺失与额外 ID 必须分别进入错误信息。
-    raise NotImplementedError("TODO 11d：实现 case/observation 严格身份对齐")
+
+    case_index = _index_by_unique_case_id(cases, "评测用例")
+    observation_index = _index_by_unique_case_id(observations, "评测观测")
+
+    missing  = sorted(set(case_index) - set(observation_index)) # 站在case_index上, 看observation_index中存在哪些缺失
+    extra = sorted(set(observation_index) - set(case_index))    # 站在case_index上, 看observation_index中存在哪些多余
+
+    if missing or extra:
+        details=[]
+        if missing:
+            details.append(f"缺失: {','.join(missing)}")
+        if extra:
+            details.append(f"额外: {','.join(extra)}")
+        raise ValueError("; ".join(details))
+    return [observation_index[case.case_id] for case in cases]
 
 
 def _aggregate_aligned(
@@ -202,7 +292,70 @@ def _aggregate_aligned(
 
     # TODO 11e：只接收 11d 已按 case 顺序对齐的观测，按书面固定分母计算
     # 全部指标。必须拒绝长度不等；不适用和失败不得混为同一语义。
-    raise NotImplementedError("TODO 11e：实现已对齐观测的固定分母聚合")
+    case_cnt = len(cases)
+    observation_cnt = len(ordered_observations)
+    if case_cnt != observation_cnt:
+        raise ValueError("case长度和observation长度不等")
+
+    task_success_values: list[bool] = []
+    tool_selection_values: list[bool] = []
+    argument_values: list[bool] = []
+    retry_recovery_values: list[bool] = []
+    citation_values: list[bool] = []
+    step_cnt = 0
+    stop_reason_distribution: dict[str, int] = dict()
+    tool_call_cnt = 0
+    successful_tool_calls_cnt = 0
+    unnecessary_tool_calls_cnt = 0
+    latencies: list[float] = []
+
+    for case, observation in zip(cases, ordered_observations, strict=True):
+        task_success_values.append(
+            observation.task_success 
+            and observation.stop_reason == case.expected_stop_reason 
+            and observation.tool_calls <= case.max_tool_calls
+        )
+
+        if case.expected_tool is not None:
+            tool_selection_values.append(
+                observation.selected_tool == case.expected_tool
+            )
+            argument_values.append(observation.arguments_correct is True)
+
+        if case.expects_retry_recovery:
+            retry_recovery_values.append(observation.retry_recovered is True)
+
+        if case.expects_citation:
+            citation_values.append(observation.citation_supported is True)
+
+        step_cnt += observation.steps
+        stop_reason = observation.stop_reason.value
+        stop_reason_distribution[stop_reason] = (
+            stop_reason_distribution.get(stop_reason, 0) + 1
+        )
+        tool_call_cnt += observation.tool_calls
+        successful_tool_calls_cnt += observation.successful_tool_calls
+        unnecessary_tool_calls_cnt += observation.unnecessary_tool_calls
+        latencies.append(observation.latency_ms)
+
+    return EvalReport(
+        case_count=case_cnt,
+        task_success_rate=_rate(task_success_values),
+        tool_selection_accuracy=_rate(tool_selection_values),
+        argument_accuracy=_rate(argument_values),
+        tool_success_rate=(
+            successful_tool_calls_cnt / tool_call_cnt if tool_call_cnt else 0.0
+        ),
+        retry_recovery_rate=_rate(retry_recovery_values),
+        unnecessary_tool_call_rate=(
+            unnecessary_tool_calls_cnt / tool_call_cnt if tool_call_cnt else 0.0
+        ),
+        average_steps=step_cnt / case_cnt if case_cnt else 0.0,
+        p50_latency_ms=_percentile(latencies, 0.5),
+        p95_latency_ms=_percentile(latencies, 0.95),
+        stop_reason_distribution=stop_reason_distribution,
+        citation_supported_rate=_rate(citation_values),
+    )
 
 
 def aggregate(cases: list[EvalCase], observations: list[EvalObservation]) -> EvalReport:
