@@ -41,7 +41,7 @@
 ## TODO12 的独立门槛
 
 TODO12 没有可由 Mock 替代的完成条件。普通全量测试在未设置 `AZUSA_GATEWAY_URL` 时会
-跳过，因此必须单独启动 Azusa `solution/kaiji-semantic-gateway` 的 BM25 fixture 网关，
+跳过，因此必须单独启动 Azusa `solution/azusa-v2` 的 BM25 fixture 网关，
 并看到 `tests/test_azusa_live_integration.py` 明确为 `1 passed`。静态 Adapter 契约测试只
 证明响应边界，不能替代这个跨仓库 HTTP 闭环。
 
