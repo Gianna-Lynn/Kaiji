@@ -24,13 +24,13 @@ live test 会明确跳过。若环境变量仍然存在，则全量测试会真�
 
 ```powershell
 Set-Location F:\Repositories\Azusa
-git switch solution/kaiji-semantic-gateway
+git switch solution/azusa-v2
 Set-Location rag
 & $py run_kaiji_gateway.py --port 38117 --embedding-path tests/fixtures/kaiji_gateway_embedding.jsonl
 ```
 
-人完成 Azusa 练习时，把上面的分支换成 `todo/kaiji-semantic-gateway`；只有该练习分支
-测试通过并实际完成联调，才算人完成 TODO 12。`solution` 只用于先验证标准答案闭环。
+人完成 Azusa 练习时，把上面的分支换成 `main`；只有 `main` 上对应 TODO 测试通过并
+实际完成联调，才算人完成 TODO 12。`solution/azusa-v2` 只用于先验证标准答案闭环。
 
 再找到或创建 Kaiji 正确答案的独立 worktree；不要为此覆盖带有人改动的 `main`：
 
