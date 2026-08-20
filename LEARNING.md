@@ -64,9 +64,8 @@ Azusa：
 
 | 分支 | 用途 |
 |---|---|
-| `main` | 稳定主线和对接说明 |
-| `todo/kaiji-semantic-gateway` | 人完成语义网关 TODO |
-| `solution/kaiji-semantic-gateway` | 可运行的语义网关答案 |
+| `main` | 人完成语义网关与 Azusa v2 课程 TODO |
+| `solution/azusa-v2` | 可运行的完整参考答案 |
 
 同一 Python 环境的 editable install 只能指向一个工作树。在 Kaiji 答案 worktree 运行
 `python -m kaiji.*` 前，应临时把该 worktree 的 `src` 放入 `PYTHONPATH`，并打印
@@ -876,9 +875,9 @@ python -m kaiji.eval_demo
 
 这一课跨越两个仓库。普通全量测试在未设置 `AZUSA_GATEWAY_URL` 时会 skip live test；
 因此 TODO 12 的完成条件不是“全量测试没有失败”，而是该文件明确显示 `1 passed`，不能
-是 `1 skipped`。标准答案闭环使用 Azusa 的 `solution/kaiji-semantic-gateway` 先验证；
-人真正完成课程时必须在自己的 `todo/kaiji-semantic-gateway` 上得到同样结果。Azusa
-`main` 当前不保证含有网关脚本，因此任何命令都必须先显式切分支。
+是 `1 skipped`。标准答案闭环使用 Azusa 的 `solution/azusa-v2` 先验证；人真正完成
+课程时必须在自己的 `main` 上得到同样结果。两个分支都包含网关脚本，但命令仍须显式
+切换分支，避免把答案态与课程态混淆。
 
 本机 Windows 将 `2991..3090` 列为 TCP 排除端口，默认 `3010` 会触发
 `WinError 10013`。下面统一使用已经实测通过的 `38117`；在其他机器也可以选择任意未占用、
@@ -888,7 +887,7 @@ python -m kaiji.eval_demo
 
 ```powershell
 Set-Location F:\Repositories\Azusa
-git switch todo/kaiji-semantic-gateway
+git switch main
 Set-Location rag
 
 python -m pytest tests/test_kaiji_gateway.py
@@ -1096,7 +1095,7 @@ Azusa 练习分支：
 
 ```powershell
 Set-Location F:\Repositories\Azusa
-git switch todo/kaiji-semantic-gateway
+git switch main
 Set-Location rag
 python -m pytest tests/test_kaiji_gateway.py
 python run_kaiji_gateway.py --port 38117 --embedding-path tests/fixtures/kaiji_gateway_embedding.jsonl
@@ -1130,7 +1129,7 @@ python -m pytest -q -rs tests/test_azusa_live_integration.py
 - 快速命令索引：`docs/curriculum.md`
 - 架构与仓库边界：`docs/architecture.md`
 - 原生、LangChain、LangGraph 对照：`docs/framework-comparison.md`
-- Azusa 网关作业（切到 `todo/kaiji-semantic-gateway` 或 `solution/kaiji-semantic-gateway`
+- Azusa 网关作业（切到 `main` 或 `solution/azusa-v2`
   后可见）：`F:\Repositories\Azusa\rag\docs\kaiji_gateway_assignment.md`
 - Azusa 主线对接说明：`F:\Repositories\Azusa\docs\kaiji_integration.md`
 - TODO13—15 Reliability Eval L1/L2/L3：`docs/reliability-course-l1-l3.md`
