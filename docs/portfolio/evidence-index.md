@@ -20,6 +20,10 @@
 | 确定性 Scorer | `eval_scorer.py` | 适用分母、引用与字面事实测试 | Formal 离线重算 |
 | 可恢复 Formal | `formal_runner.py` | Manifest、账本、hash、resume 对抗测试 | 120/120 完整 Formal |
 | Token/费用边界 | `ModelUsage`、`PersistentRequestLedger` | 请求预算与账本不变量测试 | 225 请求、历史费用估算 |
+| HTTP 服务与 fail-closed 鉴权 | `service.py` | `test_service.py` 直接契约 | Uvicorn live 200；缺配置 503 |
+| 服务端工具权限收缩 | `ServiceSettings.allowed_tools`、每请求 Registry | allow/deny 与新 Runtime 测试 | P2 窄测试 10/10 |
+| 脱敏 span 投影 | `observability.py` | 层级、失败状态与敏感字段负向测试 | 离线回归通过；未接真实 Collector |
+| 容器与 clean-clone CI | `Dockerfile`、`.github/workflows/ci.yml` | 首次远端 CI 待验证 | 本地镜像构建、非 root 与健康检查通过 |
 
 ## 文件入口
 
@@ -32,6 +36,8 @@
 - Provider：[`src/kaiji/providers/openai_compatible.py`](../../src/kaiji/providers/openai_compatible.py)
 - Runner/Scorer：[`src/kaiji/eval_runner.py`](../../src/kaiji/eval_runner.py)、[`src/kaiji/eval_scorer.py`](../../src/kaiji/eval_scorer.py)
 - Experiment/Formal：[`src/kaiji/experiment.py`](../../src/kaiji/experiment.py)、[`src/kaiji/formal_runner.py`](../../src/kaiji/formal_runner.py)
+- 服务：[`src/kaiji/service.py`](../../src/kaiji/service.py)
+- span 投影：[`src/kaiji/observability.py`](../../src/kaiji/observability.py)
 
 ## 契约与历史报告
 
@@ -39,6 +45,7 @@
 - [`docs/reliability-eval-traceability.md`](../reliability-eval-traceability.md)
 - [`docs/reliability-eval-v0.2-report.md`](../reliability-eval-v0.2-report.md)
 - [`docs/freeze-audit-v0.2.md`](../freeze-audit-v0.2.md)
+- [`docs/portfolio/p2-validation.md`](p2-validation.md)
 
 ## 原始 artifacts 的发布边界
 

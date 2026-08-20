@@ -50,10 +50,40 @@ flowchart TB
 
     AR --> MSG
     AR --> TRACE
+    TRACE --> SPAN[Redacted span projection]
     RR --> EP
     AS --> CP
     AS -. explicit selection only .-> MEM
 ```
+
+## P2 服务边界
+
+```mermaid
+sequenceDiagram
+    participant C as API Caller
+    participant A as FastAPI/Auth
+    participant P as Server Tool Policy
+    participant F as Runtime Factory
+    participant R as AgentRuntime
+    participant S as Span Projection
+
+    C->>A: Bearer + RunRequest
+    A->>A: token + Pydantic validation
+    A->>P: requested_tools
+    alt request expands server allowlist
+        P-->>C: 403
+    else allowed subset
+        P->>F: authorized tool names
+        F->>F: new Registry + Provider + Runtime
+        F->>R: run(question)
+        R-->>S: RunResult + Trace
+        S-->>C: result + redacted spans
+    end
+```
+
+服务进程不保存跨请求消息或可变 Runtime。API token、Provider key、用户问题、工具参数和
+工具输出不会进入 span 投影；原始 `RunResult` 仍会返回给已鉴权调用者，因此调用方必须
+另行承担传输加密、访问控制和数据保留责任。
 
 ## 原生 Runtime 时序
 

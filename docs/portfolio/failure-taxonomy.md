@@ -32,6 +32,9 @@
 | Experiment | 失败 Episode 被省略 | 固定矩阵完整性 | 不完整报告无 Aggregate | `complete=false`、missing coordinates | 进程外数据丢失仍需备份 |
 | Experiment | 指标不适用项稀释分母 | 按 case 适用集合聚合 | 不适用不记满分 | denominator counts | 指标本身仍可能不代表业务价值 |
 | Experiment | 金标泄露/题集不成立 | 独立审计 Prompt、工具集与题目可推导性 | Behavior/Fault Suite 分离 | 无效实验保留并标注 | 仍需要人工题集治理 |
+| Service | 未认证 API 调用 | Bearer token 恒定时间比较 | 未配置 fail closed；无效 token 返回 401 | HTTP 状态 | 无身份提供方、轮换和速率限制 |
+| Service | 调用者/Prompt 尝试扩权 | 请求工具集合与服务端 allowlist 比较 | 只允许缩小，每请求重建 Registry | 403、授权工具集合 | 已授权工具内仍需业务级策略 |
+| Observability | 敏感载荷进入 span | 属性白名单 | 不复制问题、参数、输出与 Provider 正文 | span 属性 | 原 Trace/artifact 仍需数据治理 |
 
 ## 面试时最值得主动说明的三个限制
 
@@ -42,13 +45,14 @@
 3. **Eval 分数不等于生产质量。** Formal 结果来自固定 Prompt、固定工具和受控 fixture；
    真正上线还需要在线观测、安全红队、漂移检测和用户反馈闭环。
 
-## 当前没有实现的安全能力
+## P2 后仍没有实现的安全能力
 
-- Prompt Injection 内容检测与工具输出隔离策略；
-- 基于用户/角色的细粒度 Tool Authorization；
+- Prompt Injection 内容检测与工具输出内容隔离策略；
+- 基于外部身份、角色和租户的细粒度 Tool Authorization；
 - PII 分类、脱敏、加密和数据保留策略；
 - 审批队列、Reviewer 身份与不可抵赖审计；
 - 沙箱化任意代码执行；
 - 多租户资源与状态隔离。
 
-这些缺口应作为 P2/生产路线输入，不能在简历中表述为已经完成。
+P2 只实现单租户静态 allowlist 与传输层鉴权。这些剩余缺口属于生产路线，不能在简历中
+表述为已经完成。

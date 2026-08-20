@@ -22,6 +22,8 @@ Kaiji 是一个以可靠性为主线的 Python Agent 工程项目。它从零实
 | Eval | Behavior/Fault Suite、确定性 Scorer、固定适用分母、Ablation 与 Bad Case |
 | Formal | 数据/配置指纹、逐请求账本、Episode hash 链、断点续跑与未决请求阻断 |
 | RAG 集成 | `search_azusa(query, k, mode)` 与 `get_chunk_by_id(chunk_id)` 稳定 Adapter |
+| 服务边界 | FastAPI、Bearer 鉴权、服务端 Tool allowlist、每请求独立 Runtime |
+| 交付门禁 | 非 root Docker 镜像、存活检查与 GitHub Actions 离线回归/镜像构建 |
 
 历史冻结证据记录了 40 条真实行为题 × 3 次的 DeepSeek Formal：严格 Task Success
 `116/120`；要求工具的 96 个 Episode 中 Tool Selection `96/96`、Argument Accuracy
@@ -110,6 +112,8 @@ Kaiji 刻意保留失败实验与方法学修正：
 | [`eval_scorer.py`](src/kaiji/eval_scorer.py) | 确定性单条评分与固定分母聚合 |
 | [`experiment.py`](src/kaiji/experiment.py) | Scripted 实验矩阵与 Reliability Ablation |
 | [`formal_runner.py`](src/kaiji/formal_runner.py) | 预算账本、hash 链、逐 Episode 持久化和恢复 |
+| [`service.py`](src/kaiji/service.py) | FastAPI、Bearer 鉴权、权限收缩与请求生命周期 |
+| [`observability.py`](src/kaiji/observability.py) | Trace 到脱敏 OpenTelemetry 风格 span 的纯函数投影 |
 
 所有公开主张到代码、测试和报告的映射见
 [证据索引](docs/portfolio/evidence-index.md)。
@@ -129,11 +133,17 @@ python -m kaiji.experiment --provider scripted --suite smoke
 正式实验、真实 Provider 和 Azusa Live 都有独立预算与环境门槛，不属于默认体验路径。
 推荐演示顺序、观察点与真实调用边界见 [命令行 Demo 指南](docs/portfolio/demo-guide.md)。
 
+服务模式需要显式提供 API token、Provider 配置与服务端工具 allowlist；配置缺失时不会
+匿名开放。接口、容器和 CI 的使用与结论边界见
+[服务与部署说明](docs/portfolio/service-and-deployment.md)。
+
 ## 历史验证与结论边界
 
 答案基线 `47cd4a5` 曾完成冻结审计，记录为 542 条测试中 541 passed、1 个未设置常驻
-Live URL 时的 skip；Azusa BM25 Live 另行得到通过。本求职包装阶段没有重新运行测试、
-模型请求或 Azusa 服务，因此这里引用的是既有审计证据，不是本次修改后的动态结果。
+Live URL 时的 skip；Azusa BM25 Live 另行得到通过。P2 在 ChuoEnv 中重新执行了排除
+Azusa Live 的完整离线回归，结果为 `588 passed, 1 warning`，并验证 Uvicorn 的 live 与
+缺配置 fail-closed 路径；没有调用真实模型或 Azusa。详见
+[P2 动态验证记录](docs/portfolio/p2-validation.md)。
 
 详细历史记录：
 
@@ -155,9 +165,12 @@ Live URL 时的 skip；Azusa BM25 Live 另行得到通过。本求职包装阶�
 - [岗位能力矩阵](docs/portfolio/job-market-matrix.md)
 - [中英文简历项目描述](docs/portfolio/resume-bullets.md)
 - [Interview Adversary](docs/portfolio/interview-adversary.md)
+- [安全威胁模型与 MCP 边界](docs/portfolio/security-and-mcp-boundary.md)
+- [P2 动态验证记录](docs/portfolio/p2-validation.md)
 
 ## 明确非目标
 
 Kaiji v0 不实现 Multi-Agent、复杂长期记忆、任意代码执行、浏览器自动化、生产级
 Prompt Injection 防护、Kubernetes、分布式 Runtime、vLLM 内核或大型 MCP 生态。
-FastAPI、Docker、CI 和 OpenTelemetry 属于 P2 候选，不在本分支当前完成范围内。
+P2 已增加薄 FastAPI、Docker、CI 配置和 OpenTelemetry 风格 span 投影；尚未接入真实
+Collector、身份提供方、速率限制、云部署、生产秘密管理或内容级 Prompt Injection 防护。

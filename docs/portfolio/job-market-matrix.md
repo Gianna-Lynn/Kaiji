@@ -35,11 +35,11 @@
 | LangChain/LangGraph | 熟悉框架，也能说明边界 | 强 | 原生/框架横向职责对照 |
 | RAG/检索 | Vector DB、grounded generation、citations | 部分 | Azusa Adapter 与 BM25 Live；Dense/Hybrid 效果不在 Kaiji 成绩中 |
 | Eval | Golden Set、回归、LLM-as-judge、质量指标 | 强/部分 | 确定性 Behavior/Fault Eval 强；没有 LLM-as-judge 人工一致性校准 |
-| Observability | Trace、延迟、Token、成本、失败定位 | 部分 | 结构化 Trace/账本/报告；没有 OpenTelemetry/LangSmith |
+| Observability | Trace、延迟、Token、成本、失败定位 | 部分 | 结构化 Trace/账本/报告与脱敏 OTel 风格投影；没有 SDK/Collector |
 | HITL | 高风险动作审批、恢复与升级路径 | 部分 | Interrupt/Resume 为受控模拟；没有审批队列和 Reviewer 身份 |
-| Guardrails/Security | Prompt Injection、权限、沙箱、数据隔离 | 缺/部分 | Schema 与工具白名单不是完整安全系统；生产安全缺口已明确列出 |
-| API 服务 | FastAPI 或等价生产服务 | 缺 | P2 候选，不在 P1 冒充已完成 |
-| Docker/CI/CD | 可重复部署与回归门禁 | 缺 | P2 候选 |
+| Guardrails/Security | Prompt Injection、权限、沙箱、数据隔离 | 部分 | Bearer + 服务端 allowlist + Schema；没有身份系统和内容级防护 |
+| API 服务 | FastAPI 或等价生产服务 | 部分 | 薄 FastAPI、契约测试与 Uvicorn 健康小闭环；没有限流、云部署和生产流量 |
+| Docker/CI/CD | 可重复部署与回归门禁 | 部分 | 非 root 镜像本地构建/健康小闭环；首次 Actions 待验证 |
 | Cloud/数据栈 | AWS/GCP/Azure、SQL、队列、缓存 | 缺 | 项目当前是本地单进程实验 |
 | Multi-Agent/MCP | 子 Agent、共享工具协议 | 非目标 | 不为关键词扩张；先把单 Agent 可靠性讲深 |
 | Fine-tuning | 开源模型微调或选择判断 | 非目标 | Kaiji 研究模型外部 Runtime，不训练模型 |
@@ -68,24 +68,26 @@ Kaiji 对以下方向匹配度较高：
 
 `Python`、`Pydantic`、`Tool Calling`、`Structured Output`、`LangGraph`、`LangChain`、
 `RAG Adapter`、`Checkpoint`、`Human-in-the-loop`、`Trace`、`Agent Eval`、
-`Fault Injection`、`Ablation`、`Latency/Token/Cost`、`Bad Case Analysis`。
+`Fault Injection`、`Ablation`、`Latency/Token/Cost`、`Bad Case Analysis`、`FastAPI`、
+`Docker`、`GitHub Actions`。
 
 ### 必须带限定词
 
 - `production-grade`：当前不能使用；
-- `observability`：写成结构化 Trace 与实验账本，不写 OpenTelemetry；
-- `security`：写 Schema/白名单/严格审批边界，不写完整 Prompt Injection 防护；
+- `observability`：写成结构化 Trace、账本与 OTel 风格投影，不写已接 Collector；
+- `security`：写 Bearer、服务端 allowlist/Schema，不写完整 Prompt Injection 防护；
 - `RAG`：说明由 Azusa 提供检索，Kaiji 负责 Adapter、工具选择、证据和引用；
 - `reliable`：列出具体机制与实验范围，不写泛化 SLA。
 
-## P2 决策输入
+## P2 决策结果
 
-完成 P1 后，如果要继续提高 JD 覆盖，优先顺序应是：
+P2 按求职收益和项目边界完成以下收口：
 
-1. 极薄 FastAPI 服务与健康检查；
-2. Docker + CI 的 clean-clone 验证；
-3. OpenTelemetry 风格 span 映射；
-4. Tool Authorization/Prompt Injection 威胁模型；
-5. 最小 MCP 对照。
+1. 极薄 FastAPI 服务、健康检查与 fail-closed Bearer 鉴权；
+2. 非 root Dockerfile 与 clean-clone CI 配置；
+3. 不含敏感载荷的 OpenTelemetry 风格 span 投影；
+4. 服务端 Tool allowlist 与 Prompt Injection 威胁模型；
+5. MCP 职责对照文档，不增加 MCP 运行时依赖。
 
-这些工作必须在 P2 重新评估，不能因为 JD 出现关键词就自动进入实现。
+API、离线回归和 WSL Docker 构建/健康小闭环已经动态验证；CI 因分支尚未推送而待验证。
+任何一项都不能表述为已部署或已经承载生产流量。

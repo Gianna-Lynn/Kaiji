@@ -96,6 +96,31 @@ tracing, and deterministic evaluation.
 - Audited invalid pilots, leaked gold labels, transport failures, and metric-denominator bugs,
   preserving failed experiments and bad cases instead of reporting only the best run.
 
+## 亲自复核 P2 后解锁
+
+P2 已在 portfolio 分支完成代码、契约测试、588 条离线回归、Uvicorn 健康小闭环，以及
+Docker 构建、非 root 和容器健康验证；远端 CI 尚未验证。人在能够解释权限边界、修改
+关键逻辑并亲自复验之前，不把下列内容加入正式简历。
+
+### 中文
+
+- 为单 Agent Runtime 增加薄 FastAPI 服务，以 fail-closed Bearer 鉴权和服务端 Tool
+  allowlist 保证调用者只能缩小权限，并为每个请求构建独立 Runtime/Registry。
+- 将 Kaiji Trace 映射为脱敏 OpenTelemetry 风格 span，只暴露停止原因、工具状态和错误码，
+  不记录用户问题、工具参数/输出或 Provider 正文。
+- 提供非 root Docker 镜像和 GitHub Actions clean-clone 门禁，隔离执行离线回归与镜像构建；
+  使用时必须补充真实 CI 结果，不能写成生产部署。
+
+### English
+
+- Added a thin FastAPI boundary with fail-closed bearer authentication and a server-owned
+  tool allowlist, ensuring callers can only reduce permissions and each request receives an
+  isolated runtime and registry.
+- Projected Kaiji traces into redacted OpenTelemetry-style spans containing operational
+  status and error codes without user prompts, tool arguments/results, or provider bodies.
+- Added a non-root Docker image and clean-clone GitHub Actions gates for offline regression
+  and image builds; these are delivery artifacts, not evidence of production deployment.
+
 ## 禁止使用的表述
 
 - “生产级 Agent 平台”
@@ -104,6 +129,7 @@ tracing, and deterministic evaluation.
 - “在生产环境成功率 96.67%”
 - “Hybrid RAG 达到 100% 引用准确率”
 - “独立实现 TODO13—15”（在人尚未亲手完成之前）
+- “已接入 OpenTelemetry/已生产部署”（当前只有 span 投影与交付配置）
 - “节省 X 小时/降低 Y% 成本”（仓库没有对应真实业务证据）
 
 ## 面试证据准备

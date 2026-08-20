@@ -1,0 +1,42 @@
+name: 离线契约与镜像
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+      - solution/kaiji-v0
+      - portfolio/kaiji-v0
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: 检出仓库
+        uses: actions/checkout@v6
+      - name: 安装 Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - name: 安装项目
+        run: python -m pip install ".[dev,service]"
+      - name: 运行离线测试
+        run: >-
+          pytest
+          --ignore=tests/test_azusa_live_integration.py
+          --basetemp=.ci-pytest-tmp
+          -o cache_dir=.ci-pytest-cache
+
+  container:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: 检出仓库
+        uses: actions/checkout@v6
+      - name: 构建容器镜像
+        run: docker build --tag kaiji:${{ github.sha }} .

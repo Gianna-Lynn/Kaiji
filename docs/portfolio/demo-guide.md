@@ -95,7 +95,7 @@ python -m kaiji.formal_runner --preflight
 3. 打开 `tools.py` 展示执行前后两次 Schema 门禁。
 4. 运行离线 Demo，指出 Message、Trace、证据三者职责不同。
 5. 打开 Eval 报告，主动讲一个无效实验和一个冷态超时 Bad Case。
-6. 最后说明 P2 缺口：服务接口、CI、容器、生产权限与 Prompt Injection 防护。
+6. 最后展示 P2 服务/容器证据，并主动说明远端 CI、生产身份权限与 Prompt Injection 防护缺口。
 
 ## 真实 Provider 路径
 

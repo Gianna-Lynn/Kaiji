@@ -5,6 +5,8 @@ __pycache__/
 .cache/
 .kaiji-pytest-cache/
 .kaiji-pytest-tmp/
+.codex-pytest-cache/
+.codex-pytest-tmp/
 .coverage
 htmlcov/
 .venv/

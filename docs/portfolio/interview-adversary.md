@@ -100,6 +100,19 @@
 47. 把一个 JSON Store 换成 SQLite，列出迁移、事务、并发和损坏恢复契约。
 48. 设计 OpenTelemetry span 映射，确保 Trace 不泄露 API Key、用户正文或完整工具结果。
 
+## 第九轮：P2 服务与安全边界
+
+49. 为什么 `requested_tools` 只能缩小服务端 allowlist？如果客户端能直接指定完整集合会怎样？
+50. API token 未配置时为什么返回 `503`，而不是默认关闭鉴权或使用开发 token？
+51. 为什么每次请求都创建新的 Runtime 与 Registry？哪些对象未来可以安全复用？
+52. `/health/live` 与 `/health/ready` 各自证明什么？为什么 ready 不应发送真实模型请求？
+53. 当前 span 为什么称为 OpenTelemetry“风格投影”而不是已经接入 OpenTelemetry？
+54. span 属性白名单遗漏了哪些排障信息？你会怎样在可观测性与隐私间做分级？
+55. Docker 使用非 root 用户仍不能防住哪些供应链与运行时风险？
+56. MCP 标准化工具发现和调用后，Kaiji 的授权、重试、证据与 Eval 责任为何仍然存在？
+
+源码入口：`service.py`、`observability.py`、`Dockerfile`、CI 工作流与安全威胁模型。
+
 ## 自测记录模板
 
 | 日期 | 题号 | 分数 | 暴露的问题 | 回看源码 | 下一次改进 |
@@ -111,5 +124,5 @@
 - 能在白板上画出 Runtime、LangGraph 和 Formal 三条控制流；
 - 能从任意停止原因反推 Message、Trace、证据和返回值不变量；
 - 能解释至少三个无效/失败实验，而不是只背成功数字；
-- 能明确区分已实现能力、历史答案能力和 P2 设想；
+- 能明确区分已动态验证能力、P2 静态实现和生产设想；
 - 被问到生产安全、并发或 exactly-once 时，主动限定当前实现边界。
