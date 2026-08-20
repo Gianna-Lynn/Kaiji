@@ -2,7 +2,7 @@
 
 Kaiji 是 Azusa 之上的独立 Agent 应用工程项目。它不重新实现 HNSW 或 RAG，而是通过工具适配器调用 Azusa，学习并实现可靠的单 Agent Runtime。
 
-Kaiji 的核心对象是 Message、Tool、AgentState、Workflow、Checkpoint、Trace 和 Eval Case。当前课程已经搭建到 TODO 12：`main` 保留练习代码，`solution/kaiji-v0-full-course` 保存经过验证的完整参考实现。
+Kaiji 的核心对象是 Message、Tool、AgentState、Workflow、Checkpoint、Trace 和 Eval Case。当前课程已经搭建到 TODO 15：`main` 保留练习代码，`solution/kaiji-v0` 保存经过验证的完整参考实现与 Reliability Eval 基线。
 
 ## 项目关系
 
@@ -95,7 +95,7 @@ FastAPI、Docker Compose 与部署包装属于收口加分项，不得阻塞核�
 
 ## Reliability Eval v0.2 扩展分支
 
-`codex/kaiji-reliability-eval` 在课程答案基线上增加真实 OpenAI-compatible Provider、
+`solution/kaiji-v0` 在课程答案基线上包含真实 OpenAI-compatible Provider、
 Agent Behavior/Fault Suite、确定性 Scorer、四 Harness 对照和官方 SQLite 恢复。
 现有 `eval/cases.jsonl` 仍是组件 Contract Suite，不能与真实 Agent 成绩混用。
 `eval/real_behavior_cases.jsonl` 专供真实自主 Behavior Pilot；要求模型故意重复、越界

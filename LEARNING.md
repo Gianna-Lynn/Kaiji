@@ -57,7 +57,7 @@ Kaiji：
 | 分支 | 用途 |
 |---|---|
 | `main` | 人实际写 TODO 的练习分支 |
-| `solution/kaiji-v0-full-course` | 12 课完整答案与真实 Azusa 集成 |
+| `solution/kaiji-v0` | TODO 1—15 的完整答案、真实 Azusa 集成与 Reliability Eval 基线 |
 
 Azusa：
 
@@ -76,7 +76,7 @@ Azusa：
 卡住时，先只查看一个文件的差异：
 
 ```powershell
-git diff main..solution/kaiji-v0-full-course -- src/kaiji/tools.py
+git diff main..solution/kaiji-v0 -- src/kaiji/tools.py
 ```
 
 建议顺序：

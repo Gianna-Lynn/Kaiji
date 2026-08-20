@@ -1,6 +1,6 @@
 # Kaiji 完整教学路线
 
-标准答案分支：`solution/kaiji-v0-full-course`。
+标准答案分支：`solution/kaiji-v0`。
 
 ## 0. 环境和总验收
 
@@ -37,9 +37,9 @@ Set-Location rag
 ```powershell
 Set-Location F:\Repositories\Kaiji
 git worktree list
-# 若已列出 solution/kaiji-v0-full-course，进入它上方显示的 worktree 路径。
+# 若已列出 solution/kaiji-v0，进入它上方显示的 worktree 路径。
 # 若尚未列出，执行下面两行创建并进入示例路径：
-git worktree add F:\Repositories\Kaiji-solution solution/kaiji-v0-full-course
+git worktree add F:\Repositories\Kaiji-solution solution/kaiji-v0
 Set-Location F:\Repositories\Kaiji-solution
 $env:PYTHONPATH = (Join-Path (Get-Location) 'src')
 & $py -c "import kaiji; print(kaiji.__file__)"
