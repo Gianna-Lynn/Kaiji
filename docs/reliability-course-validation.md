@@ -61,13 +61,13 @@ TODO 后的再次验收，也不把 skip 当作 TODO12 通过。
 ## main 安全整理记录
 
 课程三笔提交已整理进 `main`，随后按完整 blob 快照恢复人的 TODO7 在途文件。合并前原始
-快照固定保存在本地分支 `codex/backup-todo7-wip-20260812` 和带说明的 stash 中；两个
-文件的 blob hash 已逐项核对一致。
+快照固定保存在带说明的 stash 中；两个文件的 blob hash 已逐项核对一致。曾用于整理的
+临时备份分支已经删除，不属于长期分支拓扑。
 
 原始 `azusa.py` 在 TODO7c 的在途 `try` 后尚未写 `except/finally`，会导致整个模块无法
 导入。main 工作树只增加了语义中性的 `finally: pass` 以闭合语法：它不吞异常、不完成
-TODO7，也不改变正常路径落入原 `NotImplementedError` 的行为。原始逐字版本仍由备份
-分支保存。
+TODO7，也不改变正常路径落入原 `NotImplementedError` 的行为。原始逐字版本仍由 stash
+保存。
 
 整理后验证：
 
