@@ -434,6 +434,46 @@ def test_todo_13b_rejects_reused_call_id_in_complete_history() -> None:
     with pytest.raises(ValueError, match="复用"):
         provider._convert_messages(history)
 
+def test_todo_13b_convert_messages_keeps_valid_history_order() -> None:
+    call = ToolCall(
+        call_id="call-1",
+        name="calculate_discount",
+        arguments={"price": 100, "percent": 10},
+    )
+    result = ToolResult(
+        call_id="call-1",
+        tool_name="calculate_discount",
+        ok=True,
+        attempts=1,
+        output={"final_price": 90},
+    )
+
+    history = [
+        Message(role="user", content="帮我计算折扣"),
+        Message(role="assistant", content="我来算一下", tool_call=call),
+        Message(role="tool", content='{"final_price":90}', tool_result=result),
+        Message(role="assistant", content="折后是 90 元"),
+    ]
+
+    provider = OpenAICompatibleProvider(_config(), build_registry())
+
+    converted = provider._convert_messages(history)
+
+    assert len(converted) == 4
+    assert [message["role"] for message in converted] == [
+        "user",
+        "assistant",
+        "tool",
+        "assistant",
+    ]
+
+    assert converted[1]["tool_calls"][0]["id"] == "call-1"
+    assert converted[1]["tool_calls"][0]["function"]["name"] == (
+        "calculate_discount"
+    )
+
+    assert converted[2]["tool_call_id"] == "call-1"
+    assert converted[3]["content"] == "折后是 90 元"
 
 def test_todo_13c_parse_action_isolated_from_http() -> None:
     """13c 直接解析已校验响应，不依赖请求或环境变量。"""

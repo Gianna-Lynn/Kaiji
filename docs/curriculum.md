@@ -30,7 +30,8 @@ Set-Location rag
 ```
 
 人完成 Azusa 练习时，把上面的分支换成 `main`；只有 `main` 上对应 TODO 测试通过并
-实际完成联调，才算人完成 TODO 12。`solution/azusa-v2` 只用于先验证标准答案闭环。
+实际完成联调，才算人完成 TODO 12。Azusa 侧对应验收编号为 `AZUSA-GW-05`，其前置
+服务端实现为 `AZUSA-GW-01`—`04`。`solution/azusa-v2` 只用于先验证标准答案闭环。
 
 再找到或创建 Kaiji 正确答案的独立 worktree；不要为此覆盖带有人改动的 `main`：
 

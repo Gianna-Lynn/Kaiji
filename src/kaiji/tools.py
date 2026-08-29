@@ -89,6 +89,7 @@ class ToolRegistry:
         return tuple(self._tools.values())
 
     def schemas(self) -> list[dict[str, Any]]:
+        # schema: 数据格式契约, 说明允许哪些字段, 字段的类型, 哪些必填, 取值范围.
         schemas = []
         for tool in self._tools.values():
             parameters = tool.arguments_model.model_json_schema()

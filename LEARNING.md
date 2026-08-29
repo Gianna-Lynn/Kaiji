@@ -5,7 +5,7 @@
 
 ## 1. Kaiji 到底是什么
 
-Kaiji 是位于 Azusa 上层的单 Agent 应用工程。
+Kaiji 是位于 Azusa 上层的单 AgenCLA 应用工程。
 
 ```text
 用户问题
@@ -867,6 +867,8 @@ python -m kaiji.eval_demo
 
 #### TODO 12：真实 Azusa HTTP 联调
 
+Azusa 侧对应课程为 `AZUSA-GW-05`，其前置服务端实现为 `AZUSA-GW-01`—`04`。
+
 ##### 这是什么，为什么需要它
 
 真实 HTTP 联调让课程从 Mock 小闭环走向跨仓库事实闭环：Kaiji 真实请求 Azusa，获得检索命中，再按 `chunk_id` 取回同一份证据正文。它验证的不只是某个类在隔离测试中“像是正确”，而是双方关于 URL、Schema、ID 与证据语义的契约能跨进程共同成立。
@@ -918,6 +920,18 @@ python -m pytest -q -rs tests/test_azusa_live_integration.py
 3. 获取命中的 chunk_id；
 4. 再按 chunk_id 取回完整正文；
 5. 验证两次正文一致。
+
+##### 最小调用链
+
+搜索请求从 Kaiji 的 `AzusaHttpAdapter` 发出，经 `POST /search_azusa` 到达 Azusa
+Gateway；Gateway 调用 BM25 检索，将内部 `EmbeddingRecord` 映射为 `hits` JSON，
+Kaiji 再将响应解析为 `SearchResponse`。
+
+随后 Kaiji 使用命中的 `chunk_id` 请求 `GET /chunks/{chunk_id}`。Gateway 通过
+`_records_by_chunk_id` 精确取回正文并返回，Kaiji 最后验证搜索结果与回读证据的正文一致。
+
+这条链路验证的是两个仓库之间的请求、响应和证据身份契约，而不是 BM25 的语料质量或
+完整搜索性能。
 
 完成后可以清除当前终端的临时变量：
 
