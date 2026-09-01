@@ -153,13 +153,12 @@ def test_provider_parses_final_answer(monkeypatch) -> None:
 
     assert result.action.final_answer == "答案"
 
-
 @pytest.mark.parametrize(
     ("status", "code", "retryable"),
     [
-        (429, ProviderErrorCode.RATE_LIMITED, True),
-        (503, ProviderErrorCode.SERVER_ERROR, True),
-        (401, ProviderErrorCode.HTTP_ERROR, False),
+        (429, ProviderErrorCode.RATE_LIMITED, True),    # 限流了，稍后重试可能成功
+        (503, ProviderErrorCode.SERVER_ERROR, True),    # 服务端临时故障, 可重试
+        (401, ProviderErrorCode.HTTP_ERROR, False),     # 密钥错了, 重试多少次也没用.
     ],
 )
 def test_provider_classifies_http_failures(
@@ -178,6 +177,52 @@ def test_provider_classifies_http_failures(
     assert result.failure.retryable is retryable
     assert result.failure.status_code == status
     assert "sensitive response body" not in result.model_dump_json()
+
+
+@pytest.mark.parametrize("status", [429, 503, 401])
+def test_provider_preserves_request_id_on_http_failure(
+    monkeypatch, status: int
+) -> None:
+    """HTTP 失败也必须保留响应头中的请求标识。"""
+
+    provider = _provider(
+        monkeypatch,
+        lambda request: httpx.Response(
+            status,
+            headers={"x-request-id": f"failure-request-{status}"},
+            text="error",
+        ),
+    )
+
+    result = provider.decide([Message(role="user", content="问题")])
+
+    assert result.metadata.request_id == f"failure-request-{status}"
+
+
+def test_provider_falls_back_to_response_body_id(monkeypatch) -> None:
+    """响应头没有请求标识时，成功响应体的 id 必须作为后备。"""
+
+    provider = _provider(
+        monkeypatch,
+        lambda request: httpx.Response(
+            200,
+            json={
+                "id": "body-request-1",
+                "choices": [
+                    {
+                        "message": {
+                            "role": "assistant",
+                            "content": "答案",
+                        }
+                    }
+                ],
+            },
+        ),
+    )
+
+    result = provider.decide([Message(role="user", content="问题")])
+
+    assert result.metadata.request_id == "body-request-1"
 
 
 def test_provider_classifies_timeout(monkeypatch) -> None:
@@ -268,6 +313,29 @@ def test_provider_reads_key_only_from_environment(monkeypatch) -> None:
     assert result.failure.code == ProviderErrorCode.HTTP_ERROR
     assert called is False
     assert "test-secret" not in result.model_dump_json()
+
+
+def test_provider_rejects_empty_api_key(monkeypatch) -> None:
+    """空字符串 API Key 不得发起 HTTP 请求。"""
+
+    called = False
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        nonlocal called
+        called = True
+        return httpx.Response(200, json={})
+
+    monkeypatch.setenv("KAIJI_EMPTY_API_KEY", "")
+    provider = OpenAICompatibleProvider(
+        _config(api_key_env="KAIJI_EMPTY_API_KEY"),
+        build_registry(),
+        transport=httpx.MockTransport(handler),
+    )
+
+    result = provider.decide([Message(role="user", content="问题")])
+
+    assert result.failure.code == ProviderErrorCode.HTTP_ERROR
+    assert called is False
 
 
 def test_provider_rejects_truncated_final_answer(monkeypatch) -> None:

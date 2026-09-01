@@ -5,15 +5,17 @@ from __future__ import annotations
 from time import perf_counter
 from typing import Any, Literal
 import json
+import os
 
 import httpx
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, model_validator, ValidationError
 
 from kaiji.models import (
     Message,
     ModelAction,
     ModelCallMetadata,
     ModelCallResult,
+    ModelUsage,
     ProviderErrorCode,
     ProviderFailure,
 )
@@ -128,7 +130,144 @@ class OpenAICompatibleProvider:
         # 从 config 指定的环境变量读取；timeout/transport/429/5xx/其他 4xx、
         # 非 JSON 与协议错误必须映射为稳定 ProviderFailure；成功时保存模型、
         # 请求 ID、延迟和 Token。错误结果不得包含鉴权头或响应正文。
-        raise NotImplementedError("TODO 13d：实现 Provider 请求与失败分类")
+
+        # 开始计时
+        start_time = perf_counter()
+        # 读取环境变量中的API Key
+        api_key = os.environ.get(self._config.api_key_env)
+        # 没有Key, 返回不可重试失败
+        if not api_key:                 # if not 可以同时覆盖 None 和空字符串 ""
+            return self._failure(
+                code=ProviderErrorCode.HTTP_ERROR,
+                message="缺少API Key",
+                retryable=False,
+                started=start_time,
+            )
+        # 创建 httpx.Client
+        with httpx.Client(
+            base_url= self._config.base_url,
+            transport=self._transport,
+            timeout=self._config.timeout_seconds,
+            headers={"Authorization":f"Bearer {api_key}","Content-Type":"application/json"}, # Authorization: Bearer <key> 是 OpenAI-compatible 服务的标准鉴权头.
+        )as client:
+            request_id = None
+            # 发送一次POST
+            try:
+                search_resp = client.post(
+                    url="/chat/completions",
+                    json=self._request_payload(messages),
+                )
+                request_id = self._request_id(search_resp)
+                search_resp.raise_for_status()   # 把HTTP层错误翻译成Python异常. 
+            # 处理timeout和transport error报错.
+            except httpx.TimeoutException as exc:
+                return self._failure(
+                    code=ProviderErrorCode.TIMEOUT,
+                    message="超时",
+                    retryable=True,
+                    started=start_time,
+                    status_code=None,   # httpx.TimeoutException 通常没有 response
+                    request_id=None,
+                )
+            except httpx.TransportError as exc:
+                return self._failure(
+                    code=ProviderErrorCode.TRANSPORT_ERROR,
+                    message="传输错误",
+                    retryable=True,
+                    started=start_time,
+                    status_code=None,   # httpx.TransportError 通常没有 response
+                    request_id=request_id,
+                )
+            except httpx.HTTPStatusError as exc:    # httpx.HTTPStatusError 通常具有 response 
+                status_code = exc.response.status_code
+                if status_code == 429:
+                    return self._failure(
+                        code=ProviderErrorCode.RATE_LIMITED,
+                        message= f"HTTP {status_code}",
+                        retryable= True,
+                        started=start_time,
+                        status_code=status_code,
+                        request_id=request_id,
+                    )
+                elif status_code >= 500:
+                    return self._failure(
+                        code=ProviderErrorCode.SERVER_ERROR,
+                        message= f"HTTP {status_code}",
+                        retryable= True,
+                        started=start_time,
+                        status_code=status_code,
+                        request_id=request_id,
+                    )
+                else:
+                    return self._failure(
+                        code=ProviderErrorCode.HTTP_ERROR,
+                        message= f"HTTP {status_code}",
+                        retryable= False,
+                        started=start_time,
+                        status_code=status_code,
+                        request_id=request_id,
+                    )
+            # 检查HTTP状态码
+            # search_resp.status_code
+            # 读取JSON, 校验 _ChatResponse
+            try:
+                chat_response = _ChatResponse.model_validate(search_resp.json())
+                request_id = self._request_id(search_resp) or chat_response.id # 优先响应头, 没有响应头, 那么就回退到响应体id
+            except ValidationError: # ValidationError 属于 ValueError 体系, 必须先放前面接住.
+                return self._failure(
+                    code=ProviderErrorCode.INVALID_RESPONSE,
+                    message="chat response is invalid",
+                    retryable= False,
+                    started=start_time,
+                    request_id=request_id,
+                )
+
+            except ValueError:
+                return self._failure(
+                    code=ProviderErrorCode.INVALID_JSON,
+                    message="search response is not a valid JSON",
+                    retryable=False,
+                    started=start_time,
+                    request_id=request_id,
+                )
+
+            # 把响应解析为: 最终回答, 或者工具调用.
+            try:
+                model_action =  self._parse_action(chat_response)
+            except ValueError:
+                return self._failure(
+                    code=ProviderErrorCode.INVALID_RESPONSE,
+                    message="chat response is invalid",
+                    retryable= False,
+                    started=start_time,
+                    request_id=request_id,
+                )
+            # 计算latency
+            latency = self._elapsed_ms(start_time)
+            # 构造成功 ModelCallResult
+            model_usage = ModelUsage()
+            if chat_response.usage:
+                model_usage = ModelUsage(
+                    input_tokens=chat_response.usage.prompt_tokens,
+                    output_tokens=chat_response.usage.completion_tokens,
+                    total_tokens=chat_response.usage.total_tokens,
+                )
+
+            response_model = chat_response.model
+            if not response_model:
+                response_model = self._config.model # 如果响应中不存在model, 那么回退到配置model.
+            return ModelCallResult(
+                
+                action=model_action,
+                failure=None,
+                metadata=ModelCallMetadata(
+                    model=response_model,
+                    latency_ms=latency,
+                    request_id=request_id,
+                    usage=model_usage
+                )
+
+        )
 
     def _request_payload(self, messages: list[Message]) -> dict[str, Any]:
         """构造不含 API Key 的请求 JSON。"""
@@ -153,10 +292,12 @@ class OpenAICompatibleProvider:
                 }
             )
         # 历史消息先交给已有的单条消息转换逻辑；13a 不需要提前实现 13b 的严格配对校验。
-        for message in messages:
-            payload_messages_list.append(
-                self._convert_message(message)
-            )
+        # for message in messages:
+        #     payload_messages_list.append(
+        #         self._convert_message(message)
+        #     )
+        # 替换为13b的方法.
+        payload_messages_list.extend(self._convert_messages(messages))  # 使用extend, 把每个元素逐个追加到末尾
         tool_schemas_list = self._registry.schemas()
 
         payload_tools_list = [
@@ -491,8 +632,132 @@ class OpenAICompatibleProvider:
         # function call，arguments 必须解析为有限 JSON 对象且 finish_reason 配对；
         # 无工具路径必须有非空白文本并正常 stop。未消费的兼容扩展字段应被忽略；
         # 保留 assistant_content。
-        raise NotImplementedError("TODO 13c：解析单工具回合响应")
 
+        # _ChatResponse
+        # └── choices: list[_Choice]
+        #     └── message: _ResponseMessage
+        #         ├── role
+        #         ├── content
+        #         └── tool_calls: list[_ResponseToolCall] | None
+        # 其中, _Choice形如:
+        # _Choice
+        #     ├── message: _ResponseMessage
+        #     └──finish_reason: str | None = None
+        # 其中, _ResponseToolCall 形如:
+        # _ResponseToolCall
+        # ├── id
+        # ├── type
+        # └── function (_FunctionCall)
+        #     ├── name
+        #     └── arguments: str  # 这是一个JSON字符串, 不是字典.
+        # 其中, _ResponseMessage 形如:
+        # _ResponseMessage
+        #     ├── role: str
+        #     ├── content: str | None = None
+        #     └── tool_calls: list[_ResponseToolCall] | None = None
+
+        if len(response.choices) != 1:
+            raise ValueError("只接受一个 assistant choice")
+        choice = response.choices[0]
+        message = choice.message
+        tool_calls = message.tool_calls or []
+        has_tool_calls = bool(tool_calls)
+        finish_reason = choice.finish_reason
+        
+        if choice.message.role != "assistant":
+            raise ValueError("最终回答和工具调用的role应当是assistant")
+
+        if has_tool_calls:
+            if finish_reason not in {"tool_calls", None}:
+                raise ValueError("包含tool_call时, finish_reason 只能是 tool_calls 或者 None.")
+        else:
+            if finish_reason not in {"stop", None}:
+                raise ValueError("不包含tool_call时, finish_reason 只能是 stop 或者 None.")
+
+        # 路径1 最终回答
+        # region
+        # 其中, choices列表形如:
+        # {
+        # "choices": [
+        #     {
+        #     "message": {
+        #         "role": "assistant",
+        #         "content": "折后价格是 90 元"
+        #     },
+        #     "finish_reason": "stop"
+        #     }
+        # ]
+        # }
+        # 情况1输出: 
+        # ModelAction(
+        #     kind="final_answer",
+        #     final_answer="折后价格是 90 元",
+        # )
+        # endregion
+        if not has_tool_calls:
+
+            final_answer = choice.message.content
+            if final_answer is None:
+                raise ValueError("最终回答choice.message.content不存在.")
+            final_answer = final_answer.strip()
+            if not final_answer:
+                raise ValueError("最终回答choice.message.content必须至少包含一个非空白字符.")
+            return ModelAction(
+                kind="final_answer",
+                final_answer=final_answer,
+            )
+
+        # 路径2 工具调用
+        # region
+        # 其中, choices列表形如:
+        # {
+        # "choices":[
+        #     {
+        #         "message":{
+        #             "role":
+        #             "content":
+        #             "tool_calls":[
+        #                 {
+        #                     "id":
+        #                     "type":
+        #                     "function":{
+        #                         "name":
+        #                         "arguments":
+        #                     }
+        #                 }
+        #             ]
+        #         }
+
+        #     }
+        # ]
+        # }
+        # 输出:
+        # ModelAction(
+        #     kind="tool_call",
+        #     tool_call=ToolCall(
+        #         call_id=
+        #         name=
+        #         arguments=
+        #     )
+        #     final_answer=
+        #     assistant_content=
+        # )
+        # endregion
+        else:
+            if len(tool_calls) > 1:
+                raise ValueError("只允许一个工具调用")
+            if tool_calls[0].type != "function":
+                raise ValueError("工具类型必须是function")   
+            return ModelAction(
+                kind = "tool_call",
+                tool_call=ToolCall(
+                    call_id=tool_calls[0].id,
+                    name=tool_calls[0].function.name,
+                    arguments=json.loads(tool_calls[0].function.arguments),
+                ),
+                assistant_content=choice.message.content or ""
+            )
+        
     def _failure(
         self,
         code: ProviderErrorCode,

@@ -1166,6 +1166,11 @@ model_dump_json()  返回JSON字符串, 类型是str.
 model_dump(mode="json") 和 model_dump_json()都不是严格有限JSON校验, 可能把NaN序列化为null. 如果需要严格验证, 应该使用 json.dumps(..., allow_nan=False)
 
 下面是json库的用法:
+json.loads(str)：JSON 字符串 → Python 对象
+json.dumps(obj)：Python 对象 → JSON 字符串
+json.load(file)：JSON 文件 → Python 对象
+json.dump(obj, file)：Python 对象 → JSON 文件
+
 json.dump(data, file) 把JSON内容直接写入已经打开的文件. 这里的对象指的是"可以被转换成JSON的Python对象". 在Python中, dict, list, str等几乎都是对象.
 常见用法如下:
 ```
