@@ -113,6 +113,35 @@ def test_todo_14b_failed_or_unallowed_citation_cannot_be_success_evidence() -> N
     assert "citation" in score.failure_categories
 
 
+def test_todo_14b_empty_citations_and_empty_allowed_set_are_neutral() -> None:
+    case = _case().model_copy(update={"allowed_citation_ids": []})
+    score = score_episode(case, _episode("Kaiji 使用工具。", case=case))
+
+    assert score.citation_precision == 1.0
+    assert score.citation_recall == 1.0
+    assert score.citation_supported is True
+
+
+def test_todo_14b_missing_required_citations_has_zero_precision_and_recall() -> None:
+    score = score_episode(_case(), _episode("Kaiji 使用工具。"))
+
+    assert score.citation_precision == 0.0
+    assert score.citation_recall == 0.0
+    assert score.citation_supported is False
+
+
+def test_todo_14b_unrequested_citation_has_zero_precision_but_neutral_recall() -> None:
+    case = _case().model_copy(update={"allowed_citation_ids": []})
+    score = score_episode(
+        case,
+        _episode("Kaiji 使用工具。\nCitations: kaiji-001", case=case),
+    )
+
+    assert score.citation_precision == 0.0
+    assert score.citation_recall == 1.0
+    assert score.citation_supported is False
+
+
 def test_todo_14b_required_answer_fact_does_not_accept_alphanumeric_fragment() -> None:
     """事实是规范化字面量，不能把 190 当成独立事实 90。"""
 

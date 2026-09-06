@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 from collections.abc import Callable
+from time import perf_counter
+from uuid import uuid4
 import json
 
 from pydantic import (
@@ -16,7 +18,7 @@ from pydantic import (
 )
 
 from kaiji.models import Message, RunResult, StopReason
-from kaiji.runtime import DecisionProvider
+from kaiji.runtime import DecisionProvider, AgentRuntime
 from kaiji.tools import ToolExecutor
 
 
@@ -25,19 +27,19 @@ class AgentEvalCase(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
-    case_id: str = Field(min_length=1)
-    semantic_group: str = Field(min_length=1)
-    suite: str = Field(min_length=1)
-    prompt: str = Field(min_length=1)
-    scenario: str = Field(default="default", min_length=1)
-    expected_stop_reason: StopReason
-    expected_tool: str | None = None
-    expected_arguments: dict = Field(default_factory=dict)
-    required_answer_facts: list[str] = Field(default_factory=list)
-    allowed_citation_ids: list[str] = Field(default_factory=list)
-    expects_no_tool: StrictBool = False
-    expects_retry_recovery: StrictBool = False
-    max_steps: StrictInt = Field(default=4, ge=1)
+    case_id: str = Field(min_length=1)                      # 用例唯一标识。
+    semantic_group: str = Field(min_length=1)               # 语义测试分组。
+    suite: str = Field(min_length=1)                        # 所属测试套件。
+    prompt: str = Field(min_length=1)                       # 提供给 Agent 的用户提示。
+    scenario: str = Field(default="default", min_length=1)  # 执行场景名称。
+    expected_stop_reason: StopReason                        # 预期的停止原因。
+    expected_tool: str | None = None                        # 预期调用的工具名称。
+    expected_arguments: dict = Field(default_factory=dict)  # 预期的工具参数。
+    required_answer_facts: list[str] = Field(default_factory=list)  # 答案必须包含的事实。
+    allowed_citation_ids: list[str] = Field(default_factory=list)   # 允许引用的证据编号。
+    expects_no_tool: StrictBool = False                             # 是否预期不调用工具。
+    expects_retry_recovery: StrictBool = False                      # 是否预期重试后恢复成功。
+    max_steps: StrictInt = Field(default=4, ge=1)                   # Agent 最多执行的步数。
 
     @field_validator("case_id", "semantic_group", "suite", "prompt", "scenario")
     @classmethod
@@ -84,12 +86,12 @@ class AgentEpisode(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
-    run_id: str = Field(min_length=1)
-    case_id: str = Field(min_length=1)
-    suite: str = Field(min_length=1)
-    repeat_index: StrictInt = Field(default=0, ge=0)
-    latency_ms: float = Field(ge=0, allow_inf_nan=False)
-    result: RunResult
+    run_id: str = Field(min_length=1)                    # 本次运行的唯一标识。
+    case_id: str = Field(min_length=1)                   # 对应评测用例的标识。
+    suite: str = Field(min_length=1)                     # 所属评测套件名称。
+    repeat_index: StrictInt = Field(default=0, ge=0)     # 同一用例的重复运行序号。
+    latency_ms: float = Field(ge=0, allow_inf_nan=False) # 本次运行的耗时（毫秒）。
+    result: RunResult                                    # 未删减的 Runtime 运行结果。
 
     @field_validator("run_id", "case_id", "suite")
     @classmethod
@@ -100,20 +102,21 @@ class AgentEpisode(BaseModel):
             raise ValueError("Episode 标识不得为空白")
         return value
 
-
+# 语法上：Callable[[参数类型列表], 返回类型] 表示“赋值号左边这个可调用对象的类型”；
+# 右侧的 [AgentEvalCase] 是仅含一个参数类型 AgentEvalCase 的类型列表，
+# 逗号后的 DecisionProvider 表示该可调用对象返回 DecisionProvider。
 ProviderFactory = Callable[[AgentEvalCase], DecisionProvider]
 ExecutorFactory = Callable[[AgentEvalCase], ToolExecutor]
-
 
 class AgentEvalRunner:
     """为每个 case 创建隔离 Provider/Executor，并执行真实 Runtime。"""
 
     def __init__(
         self,
-        provider_factory: ProviderFactory,
-        executor_factory: ExecutorFactory,
+        provider_factory: ProviderFactory,  # 按用例创建决策提供器。
+        executor_factory: ExecutorFactory,  # 按用例创建工具执行器。
         *,
-        duplicate_guard: bool = True,
+        duplicate_guard: bool = True,       # 是否启用重复调用防护。
     ) -> None:
         self._provider_factory = provider_factory
         self._executor_factory = executor_factory
@@ -124,8 +127,30 @@ class AgentEvalRunner:
         # TODO 14a（L2）：严格验证 repeat_index；每条 case 都重新调用两个工厂，
         # 用 case.max_steps 和本 Runner 的 duplicate_guard 运行真实 AgentRuntime；
         # 保存唯一 run_id、墙钟延迟及未经删减的 RunResult。
-        raise NotImplementedError("TODO 14a：运行隔离的真实 Runtime Episode")
-
+        if type(repeat_index) is not int or repeat_index < 0:
+            raise ValueError("repeat_index必须是真正的非负整数")
+        start_time = perf_counter()
+        provider = self._provider_factory(case)
+        executor = self._executor_factory(case)
+        agent_runtime = AgentRuntime(
+            decision_provider=provider,
+            executor=executor,
+            max_steps=case.max_steps,
+            duplicate_guard= self._duplicate_guard,
+        )
+        run_result = agent_runtime.run(case.prompt)
+        agent_episode=AgentEpisode(
+            run_id=f"{case.case_id}-{repeat_index}-{uuid4().hex}",
+            case_id=case.case_id,
+            suite=case.suite,
+            repeat_index=repeat_index,
+            latency_ms=self._elapsed_ms(start_time),
+            result=run_result,
+        )
+        return agent_episode
+    def _elapsed_ms(self, start_time: float) -> float:
+        return max(0.0 , (perf_counter() - start_time) * 1000)
+        
 
 def first_tool_call(episode: AgentEpisode):
     """返回模型首次工具选择；没有工具动作时返回空值。"""

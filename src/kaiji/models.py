@@ -281,13 +281,13 @@ class RunResult(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
-    answer: str | None
-    stop_reason: StopReason
-    steps: StrictInt = Field(ge=1)
-    messages: list[Message]
-    successful_tool_results: list[ToolResult]
-    trace: list[TraceEvent]
-    model_calls: list[ModelCallResult] = Field(default_factory=list)
+    answer: str | None                                      # 最终回答；未完成时为 None
+    stop_reason: StopReason                                 # 本次运行的停止原因
+    steps: StrictInt = Field(ge=1)                          # 实际执行的逻辑步骤数
+    messages: list[Message]                                 # 运行期间产生的消息
+    successful_tool_results: list[ToolResult]               # 成功的工具调用结果
+    trace: list[TraceEvent]                                 # 完整的运行事件轨迹
+    model_calls: list[ModelCallResult] = Field(default_factory=list)  # 模型调用记录
 
     @model_validator(mode="after")
     def runtime_artifacts_are_consistent(self) -> RunResult:
