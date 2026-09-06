@@ -2,11 +2,12 @@
 
 from __future__ import annotations
 
-import re
-from collections import Counter
 import math
-from typing import Any
+import re
 import unicodedata
+from collections import Counter
+from dataclasses import dataclass
+from typing import Any
 
 from pydantic import BaseModel, Field
 
@@ -14,31 +15,30 @@ from kaiji.eval_runner import (
     AgentEpisode,
     AgentEvalCase,
     first_tool_call,
-    tool_messages,
 )
-from kaiji.models import StopReason, ToolResult
+from kaiji.models import ToolResult, StopReason
 
 
 class AgentScore(BaseModel):
     """保存单条 Episode 的逐项判定，不能由 Runner 自报成功。"""
 
-    run_id: str
-    case_id: str
-    task_success: bool
-    stop_correct: bool
-    tool_selection_correct: bool
-    arguments_correct: bool
-    answer_facts_correct: bool
-    citation_precision: float
-    citation_recall: float
-    citation_supported: bool
-    retry_recovered: bool
-    steps: int
-    input_tokens: int = Field(ge=0)
-    output_tokens: int = Field(ge=0)
-    total_tokens: int = Field(ge=0)
-    latency_ms: float = Field(ge=0)
-    failure_categories: list[str] = Field(default_factory=list)
+    run_id: str                                      # 单次运行的唯一标识
+    case_id: str                                     # 评测用例的唯一标识
+    task_success: bool                               # 任务是否完成并成功
+    stop_correct: bool                               # 停止时机和停止原因是否正确
+    tool_selection_correct: bool                     # 是否选择了期望的工具
+    arguments_correct: bool                           # 工具参数是否符合期望
+    answer_facts_correct: bool                        # 回答是否包含全部目标事实
+    citation_precision: float                         # 实际引用中受支持引用的比例
+    citation_recall: float                            # 成功证据被引用的覆盖比例
+    citation_supported: bool                          # 回答中出现的所有引用，是否都来自本次运行成功且经过校验的工具证据。
+    retry_recovered: bool                             # 重试后是否恢复成功
+    steps: int                                        # Episode 执行的步骤数
+    input_tokens: int = Field(ge=0)                  # 输入 Token 总数
+    output_tokens: int = Field(ge=0)                 # 输出 Token 总数
+    total_tokens: int = Field(ge=0)                  # 输入和输出 Token 总数
+    latency_ms: float = Field(ge=0)                  # Episode 延迟，单位为毫秒
+    failure_categories: list[str] = Field(default_factory=list)  # 失败类别列表
 
 
 class AgentAggregateReport(BaseModel):
@@ -63,11 +63,25 @@ class AgentAggregateReport(BaseModel):
     failure_distribution: dict[str, int]
 
 
+@dataclass(frozen=True)
+class _CitationEvaluation:
+    """保存单条引用评分及聚合所需计数，不进入公开报告格式。"""
+
+    precision: float
+    recall: float
+    supported: bool
+    extracted_count: int
+    allowed_count: int
+    supported_count: int
+
+
 def _contains_subset(actual: Any, expected: Any) -> bool:
     """递归判断实际 JSON 是否包含期望子集，列表按完整值比较。"""
 
     if isinstance(expected, dict):
+        # 先判断 actual 是字典，再用 all() 检查每个期望键值。
         return isinstance(actual, dict) and all(
+            # key in actual 确保键存在，and 短路后递归比较对应值。
             key in actual and _contains_subset(actual[key], value)
             for key, value in expected.items()
         )
@@ -87,7 +101,7 @@ def _contains_answer_fact(answer: str, fact: str) -> bool:
     是 ASCII 字母、数字或下划线，则相邻同类 ASCII 字符不会被当作边界。
     CJK 字符不参与这个西文标识边界，因此 ``Kaiji使用工具`` 可以匹配
     ``使用工具``。该规则能拒绝 ``90`` 匹配 ``190``，但不尝试自然语言蕴含、
-    否定识别、同义词或数值等价（例如 ``90`` 与 ``90.0``）判断。
+    否定识别、同义词或数值等价判断。
     """
 
     normalized_answer = _normalize_fact_text(answer)
@@ -128,9 +142,9 @@ def _extract_citations(answer: str | None) -> list[str]:
     if not answer:
         return []
     candidates: list[str] = []
-    for match in re.finditer(r"(?im)^Citations?\s*:\s*(.+)$", answer):
-        candidates.extend(re.findall(r"[\w.-]+", match.group(1)))
-    candidates.extend(re.findall(r"\[([\w.-]+)\]", answer))
+    for match in re.finditer(r"(?im)^Citations?\s*:\s*(.+)$", answer):  # 查找回答中的 Citations 行
+        candidates.extend(re.findall(r"[\w.-]+", match.group(1)))       # 提取引用行中的引用标识
+    candidates.extend(re.findall(r"\[([\w.-]+)\]", answer))             # 提取回答中方括号包裹的引用
     return list(dict.fromkeys(candidates))
 
 
@@ -156,6 +170,37 @@ def _evidence_ids(results: list[ToolResult]) -> set[str]:
     return found
 
 
+def _evaluate_citations(
+    case: AgentEvalCase,
+    episode: AgentEpisode,
+) -> _CitationEvaluation:
+    """一次性计算单条引用成绩和聚合所需的充分统计量。"""
+
+    allowed = set(case.allowed_citation_ids)
+    extracted = set(_extract_citations(episode.result.answer))
+    evidence = _evidence_ids(episode.result.successful_tool_results)
+    supported = allowed & extracted & evidence
+
+    precision = (
+        len(supported) / len(extracted)
+        if extracted
+        else (1.0 if not allowed else 0.0)
+    )
+    recall = len(supported) / len(allowed) if allowed else 1.0
+    citations_supported = (
+        extracted.issubset(allowed & evidence)
+        and (bool(extracted) or not allowed)
+    )
+    return _CitationEvaluation(
+        precision=precision,
+        recall=recall,
+        supported=citations_supported,
+        extracted_count=len(extracted),
+        allowed_count=len(allowed),
+        supported_count=len(supported),
+    )
+
+
 def _token_totals(episode: AgentEpisode) -> tuple[int, int, int]:
     """把 Provider 未报告的 Token 按零计入，不缩小聚合分母。"""
 
@@ -171,11 +216,15 @@ def _token_totals(episode: AgentEpisode) -> tuple[int, int, int]:
     return input_tokens, output_tokens, total_tokens
 
 
-def score_episode(case: AgentEvalCase, episode: AgentEpisode) -> AgentScore:
-    """从原始 RunResult 独立计算单条成绩和失败类别。"""
+def _score_episode_with_citations(
+    case: AgentEvalCase,
+    episode: AgentEpisode,
+) -> tuple[AgentScore, _CitationEvaluation]:
+    """评分一次 Episode，并同时返回聚合引用指标所需的计数。"""
 
     if case.case_id != episode.case_id:
         raise ValueError("case 与 episode 的 case_id 必须一致")
+
     call = first_tool_call(episode)
     if case.expects_no_tool:
         tool_selection_correct = call is None
@@ -188,32 +237,25 @@ def score_episode(case: AgentEvalCase, episode: AgentEpisode) -> AgentScore:
             and _contains_subset(call.arguments, case.expected_arguments)
         )
 
-    answer = episode.result.answer or ""
-    answer_facts_correct = all(
-        _contains_answer_fact(answer, fact) for fact in case.required_answer_facts
-    )
-    cited = set(_extract_citations(episode.result.answer))
-    allowed = set(case.allowed_citation_ids)
-    evidence = _evidence_ids(episode.result.successful_tool_results)
-    supported = cited & evidence & allowed
-    citation_precision = (
-        len(supported) / len(cited) if cited else (1.0 if not allowed else 0.0)
-    )
-    citation_recall = len(supported) / len(allowed) if allowed else 1.0
-    citation_supported = (
-        cited <= evidence and cited <= allowed and (bool(cited) or not allowed)
-    )
-    stop_correct = episode.result.stop_reason == case.expected_stop_reason
-    # TODO14 的原生 RunResult 只携带 ToolResult.attempts，因此这里只统计
-    # Executor 在一次工具调用内的有界重试。TODO11 LangGraph 的 query rewrite
-    # 由 retry_count/step_count 单独记录，不应凭“多条消息”在这里猜测；Provider
-    # 的 transport retry 同样属于请求可靠性，不属于业务重试恢复指标。
-    retry_recovered = episode.result.stop_reason == StopReason.COMPLETED and any(
-        message.tool_result is not None and message.tool_result.attempts > 1
-        for message in tool_messages(episode)
-    )
-    if not case.expects_retry_recovery:
-        retry_recovered = True
+    if not episode.result.answer:
+        answer_facts_correct = False
+    else:
+        answer_facts_correct = all(
+            _contains_answer_fact(episode.result.answer, fact)
+            for fact in case.required_answer_facts
+        )
+
+    citations = _evaluate_citations(case, episode)
+    stop_correct = case.expected_stop_reason == episode.result.stop_reason
+    retry_recovered = True
+    if case.expects_retry_recovery:
+        retry_recovered = (
+            episode.result.stop_reason == StopReason.COMPLETED
+            and any(
+                result.attempts > 1
+                for result in episode.result.successful_tool_results
+            )
+        )
 
     task_success = all(
         (
@@ -221,58 +263,70 @@ def score_episode(case: AgentEvalCase, episode: AgentEpisode) -> AgentScore:
             tool_selection_correct,
             arguments_correct,
             answer_facts_correct,
-            citation_supported,
+            citations.supported,
             retry_recovered,
         )
     )
-    failures = []
-    for name, passed in (
-        ("stop", stop_correct),
-        ("tool_selection", tool_selection_correct),
-        ("arguments", arguments_correct),
-        ("answer_facts", answer_facts_correct),
-        ("citation", citation_supported),
-        ("retry_recovery", retry_recovered),
-    ):
-        if not passed:
-            failures.append(name)
+    failure_categories = [
+        category
+        for category, passed in (
+            ("stop", stop_correct),
+            ("tool_selection", tool_selection_correct),
+            ("arguments", arguments_correct),
+            ("answer_facts", answer_facts_correct),
+            ("citation", citations.supported),
+            ("retry_recovery", retry_recovered),
+        )
+        if not passed
+    ]
     input_tokens, output_tokens, total_tokens = _token_totals(episode)
-    return AgentScore(
+    score = AgentScore(
         run_id=episode.run_id,
-        case_id=case.case_id,
+        case_id=episode.case_id,
         task_success=task_success,
         stop_correct=stop_correct,
         tool_selection_correct=tool_selection_correct,
         arguments_correct=arguments_correct,
         answer_facts_correct=answer_facts_correct,
-        citation_precision=citation_precision,
-        citation_recall=citation_recall,
-        citation_supported=citation_supported,
+        citation_precision=citations.precision,
+        citation_recall=citations.recall,
+        citation_supported=citations.supported,
         retry_recovered=retry_recovered,
         steps=episode.result.steps,
         input_tokens=input_tokens,
         output_tokens=output_tokens,
         total_tokens=total_tokens,
         latency_ms=episode.latency_ms,
-        failure_categories=failures,
+        failure_categories=failure_categories,
     )
+    return score, citations
+
+
+def score_episode(case: AgentEvalCase, episode: AgentEpisode) -> AgentScore:
+    """从原始 RunResult 独立计算单条成绩和失败类别。"""
+
+    score, _citations = _score_episode_with_citations(case, episode)
+    return score
 
 
 def aggregate_scores(
     cases: list[AgentEvalCase],
     episodes: list[AgentEpisode],
 ) -> AgentAggregateReport:
-    """要求每条 Episode 都有已知 case，并按全部 Episode 固定分母聚合。"""
+    """验证完整 Episode 集合，并按各指标的固定适用分母聚合。"""
 
     case_by_id = {case.case_id: case for case in cases}
     if len(case_by_id) != len(cases):
         raise ValueError("Agent Case 的 case_id 必须唯一")
+
     run_ids = [episode.run_id for episode in episodes]
     if len(run_ids) != len(set(run_ids)):
         raise ValueError("Episode 的 run_id 必须唯一")
-    unknown = {episode.case_id for episode in episodes} - set(case_by_id)
-    if unknown:
-        raise ValueError(f"Episode 包含未知 case_id: {sorted(unknown)}")
+
+    unknown_case_ids = {episode.case_id for episode in episodes} - set(case_by_id)
+    if unknown_case_ids:
+        raise ValueError(f"Episode 包含未知 case_id: {sorted(unknown_case_ids)}")
+
     mismatched_suites = {
         episode.case_id
         for episode in episodes
@@ -280,50 +334,57 @@ def aggregate_scores(
     }
     if mismatched_suites:
         raise ValueError(f"Episode suite 与 case 不一致: {sorted(mismatched_suites)}")
-    covered = {episode.case_id for episode in episodes}
-    missing = set(case_by_id) - covered
-    if missing:
-        raise ValueError(f"报告缺少 case: {sorted(missing)}")
 
-    scores = [score_episode(case_by_id[item.case_id], item) for item in episodes]
+    covered_case_ids = {episode.case_id for episode in episodes}
+    missing_case_ids = set(case_by_id) - covered_case_ids
+    if missing_case_ids:
+        raise ValueError(f"报告缺少 case: {sorted(missing_case_ids)}")
+
+    evaluated = [
+        (
+            episode,
+            *_score_episode_with_citations(
+                case_by_id[episode.case_id],
+                episode,
+            ),
+        )
+        for episode in episodes
+    ]
+    scores = [score for _episode, score, _citations in evaluated]
     count = len(scores)
 
     def rate(values: list[bool]) -> float:
-        """按完整 Episode 数计算全局固定分母比率。"""
+        """计算适用样本的通过率；没有适用样本时返回零。"""
 
-        return sum(values) / count if count else 0.0
+        return sum(values) / len(values) if values else 0.0
 
-    failures = Counter(
-        category for score in scores for category in score.failure_categories
-    )
-    ordered_latency = sorted(score.latency_ms for score in scores)
-    scored_episodes = list(zip(episodes, scores, strict=True))
     tool_scores = [
         score
-        for episode, score in zip(episodes, scores, strict=True)
-        if case_by_id[episode.case_id].expected_tool is not None
+        for episode, score, _citations in evaluated
+        if not case_by_id[episode.case_id].expects_no_tool
     ]
     no_tool_scores = [
         score
-        for episode, score in zip(episodes, scores, strict=True)
+        for episode, score, _citations in evaluated
         if case_by_id[episode.case_id].expects_no_tool
     ]
     retry_scores = [
         score
-        for episode, score in zip(episodes, scores, strict=True)
+        for episode, score, _citations in evaluated
         if case_by_id[episode.case_id].expects_retry_recovery
     ]
-    cited_count = 0
-    allowed_count = 0
-    supported_count = 0
-    for episode, _score in scored_episodes:
-        case = case_by_id[episode.case_id]
-        cited = set(_extract_citations(episode.result.answer))
-        allowed = set(case.allowed_citation_ids)
-        evidence = _evidence_ids(episode.result.successful_tool_results)
-        cited_count += len(cited)
-        allowed_count += len(allowed)
-        supported_count += len(cited & allowed & evidence)
+
+    supported_count = sum(
+        citations.supported_count for _episode, _score, citations in evaluated
+    )
+    extracted_count = sum(
+        citations.extracted_count for _episode, _score, citations in evaluated
+    )
+    allowed_count = sum(
+        citations.allowed_count for _episode, _score, citations in evaluated
+    )
+
+    ordered_latency = sorted(score.latency_ms for score in scores)
 
     def percentile(value: float) -> float:
         """使用 nearest-rank 计算固定 Episode 集上的延迟分位数。"""
@@ -333,33 +394,28 @@ def aggregate_scores(
         index = max(0, math.ceil(value * len(ordered_latency)) - 1)
         return ordered_latency[index]
 
+    failure_distribution = Counter(
+        category for score in scores for category in score.failure_categories
+    )
     return AgentAggregateReport(
         episode_count=count,
         task_success_rate=rate([score.task_success for score in scores]),
-        tool_selection_accuracy=(
-            sum(score.tool_selection_correct for score in tool_scores)
-            / len(tool_scores)
-            if tool_scores
-            else 0.0
+        tool_selection_accuracy=rate(
+            [score.tool_selection_correct for score in tool_scores]
         ),
-        argument_accuracy=(
-            sum(score.arguments_correct for score in tool_scores) / len(tool_scores)
-            if tool_scores
-            else 0.0
+        argument_accuracy=rate([score.arguments_correct for score in tool_scores]),
+        no_tool_accuracy=rate(
+            [score.tool_selection_correct for score in no_tool_scores]
         ),
-        no_tool_accuracy=(
-            sum(score.tool_selection_correct for score in no_tool_scores)
-            / len(no_tool_scores)
-            if no_tool_scores
-            else 0.0
+        retry_recovery_rate=rate(
+            [score.retry_recovered for score in retry_scores]
         ),
-        retry_recovery_rate=(
-            sum(score.retry_recovered for score in retry_scores) / len(retry_scores)
-            if retry_scores
-            else 0.0
+        citation_precision=(
+            supported_count / extracted_count if extracted_count else 0.0
         ),
-        citation_precision=(supported_count / cited_count if cited_count else 0.0),
-        citation_recall=(supported_count / allowed_count if allowed_count else 0.0),
+        citation_recall=(
+            supported_count / allowed_count if allowed_count else 0.0
+        ),
         average_steps=(sum(score.steps for score in scores) / count if count else 0.0),
         total_input_tokens=sum(score.input_tokens for score in scores),
         total_output_tokens=sum(score.output_tokens for score in scores),
@@ -370,7 +426,7 @@ def aggregate_scores(
         p50_latency_ms=percentile(0.50),
         p95_latency_ms=percentile(0.95),
         stop_reason_distribution=dict(
-            Counter(item.result.stop_reason.value for item in episodes)
+            Counter(episode.result.stop_reason.value for episode in episodes)
         ),
-        failure_distribution=dict(failures),
+        failure_distribution=dict(failure_distribution),
     )
