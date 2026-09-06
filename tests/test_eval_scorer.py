@@ -285,6 +285,30 @@ def test_todo_14c_aggregate_requires_every_case_and_unique_run_ids() -> None:
         )
 
 
+def test_todo_14c_aggregate_reuses_single_episode_citation_evaluation(
+    monkeypatch,
+) -> None:
+    """聚合不得在单条评分后再次解析同一 Episode 的引用。"""
+
+    import kaiji.eval_scorer as scorer_module
+
+    extract_citations = scorer_module._extract_citations
+    call_count = 0
+
+    def counting_extract(answer):
+        nonlocal call_count
+        call_count += 1
+        return extract_citations(answer)
+
+    monkeypatch.setattr(scorer_module, "_extract_citations", counting_extract)
+    aggregate_scores(
+        [_case()],
+        [_episode("Kaiji 使用工具。\nCitations: kaiji-001")],
+    )
+
+    assert call_count == 1
+
+
 def test_todo_14b_metadata_chunk_id_cannot_masquerade_as_success_evidence() -> None:
     """只有证据外壳的 chunk_id 可被引用，metadata 同名字段必须忽略。"""
 

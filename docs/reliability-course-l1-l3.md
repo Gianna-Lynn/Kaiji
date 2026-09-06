@@ -121,6 +121,9 @@ python -m pytest tests/test_eval_scorer.py -k todo_14b
 - 每个 case 至少有一条 Episode，缺失不能缩小分母；
 - 工具、无工具、重试只使用各自适用 Episode；
 - Citation Precision 分母是全部实际引用，Recall 分母是全部允许引用；
+- `_score_episode_with_citations()` 在单条评分时同时返回公开 `AgentScore` 与私有
+  `_CitationEvaluation`；后者保存引用聚合所需的三个计数，不进入持久化报告。
+  聚合时每条 Episode 只能评分一次，不得再次解析回答或工具证据；
 - P50/P95 使用 nearest-rank，并聚合 Steps、Token、延迟、停止与失败分布。
 
 ```powershell

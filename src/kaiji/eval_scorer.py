@@ -4,8 +4,8 @@ from __future__ import annotations
 
 import re
 import unicodedata
+from dataclasses import dataclass
 from typing import Any
-from time import perf_counter
 
 from pydantic import BaseModel, Field
 
@@ -59,6 +59,18 @@ class AgentAggregateReport(BaseModel):
     p95_latency_ms: float
     stop_reason_distribution: dict[str, int]
     failure_distribution: dict[str, int]
+
+
+@dataclass(frozen=True)
+class _CitationEvaluation:
+    """保存单条引用评分及聚合所需计数，不进入公开报告格式。"""
+
+    precision: float
+    recall: float
+    supported: bool
+    extracted_count: int
+    allowed_count: int
+    supported_count: int
 
 
 def _contains_subset(actual: Any, expected: Any) -> bool:
@@ -156,6 +168,37 @@ def _evidence_ids(results: list[ToolResult]) -> set[str]:
     return found
 
 
+def _evaluate_citations(
+    case: AgentEvalCase,
+    episode: AgentEpisode,
+) -> _CitationEvaluation:
+    """一次性计算单条引用成绩和聚合所需的充分统计量。"""
+
+    allowed = set(case.allowed_citation_ids)
+    extracted = set(_extract_citations(episode.result.answer))
+    evidence = _evidence_ids(episode.result.successful_tool_results)
+    supported = allowed & extracted & evidence
+
+    precision = (
+        len(supported) / len(extracted)
+        if extracted
+        else (1.0 if not allowed else 0.0)
+    )
+    recall = len(supported) / len(allowed) if allowed else 1.0
+    citations_supported = (
+        extracted.issubset(allowed & evidence)
+        and (bool(extracted) or not allowed)
+    )
+    return _CitationEvaluation(
+        precision=precision,
+        recall=recall,
+        supported=citations_supported,
+        extracted_count=len(extracted),
+        allowed_count=len(allowed),
+        supported_count=len(supported),
+    )
+
+
 def _token_totals(episode: AgentEpisode) -> tuple[int, int, int]:
     """把 Provider 未报告的 Token 按零计入，不缩小聚合分母。"""
 
@@ -171,156 +214,115 @@ def _token_totals(episode: AgentEpisode) -> tuple[int, int, int]:
     return input_tokens, output_tokens, total_tokens
 
 
-def score_episode(case: AgentEvalCase, episode: AgentEpisode) -> AgentScore:
-    """从原始 RunResult 独立计算单条成绩和失败类别。"""
-    # TODO 14b（L2）：只从原始 RunResult(Episode里保存的原始运行结果)、
-    # case 期望与成功证据计算成绩。
-    # 参数使用 JSON 子集语义；
-    # 事实使用 _contains_answer_fact 的确定性字面量规则；
-    # 引用必须同时属于实际引用、允许集合和成功证据；不接受 Runner 自报成功。
-    # 逐项失败类别和 Token 也必须保留。
-    # retry_recovered 只认 Executor的 ToolResult.attempts>1；TODO11 query rewrite 有独立状态字段，Provider
-    # transport retry 不是此业务指标。
+def _score_episode_with_citations(
+    case: AgentEvalCase,
+    episode: AgentEpisode,
+) -> tuple[AgentScore, _CitationEvaluation]:
+    """评分一次 Episode，并同时返回聚合引用指标所需的计数。"""
+
     if case.case_id != episode.case_id:
-        raise ValueError("把错误 Case 和 Episode 配对评分，不得继续比较")
+        raise ValueError("case 与 episode 的 case_id 必须一致")
 
-    tool_call_first = first_tool_call(episode)
-
-
-    allowed_set = set(case.allowed_citation_ids)                          # 允许引用集合：用例case规定可以引用的证据 ID。
-    extracted_set = set(_extract_citations(episode.result.answer))        # 实际引用集合：从模型的最终回答中提取出的证据 ID。
-    success_set = _evidence_ids(episode.result.successful_tool_results)   # 成功证据集合：Runtime中工具成功返回, 确实存在的证据 ID。
-
-    # 受支持引用集合：同时被 Agent 引用、被用例允许、且由工具成功返回的证据 ID。
-    #                模型引用了某个ID, 而且这个ID是题目允许的, 并且工具真的成功返回过.
-    supported_set = allowed_set & extracted_set & success_set
-
-    # citation_percision: 受支持引用/实际引用, supported / extracted. (惩罚胡乱引用/越权引用/没有证据的引用)
-    # citation_recall: 受支持引用/允许引用. supported / allowed (惩罚漏引用)
-    # citation_supported: 模型写出的每一个引用, 是否都同时属于允许集合和成功证据集合? extracted 是否是 allowed ∩ success 的子集?
-    
-    # | extracted | allowed | Precision | Recall |
-    # |---|---|---|---|
-    # | 空 | 空 | 1.0 | 1.0 |   不要求引用, 模型也没有进行任何引用.
-    # | 空 | 非空 | 0.0 | 0.0 |     要求引用, 但模型完全漏掉.
-    # | 非空 | 空 | 0.0 | 1.0 |    不要求引用, 但模型违规引用.  allowed为空时, 不存在召回目标, 本项目约定记为1.0. 违规引用由percision和citation_supported识别.
-    # | 非空 | 非空 | supported / extracted | supported / allowed |
-    
-    if not extracted_set and not allowed_set:
-        citation_precision = 1.0
-        citation_recall = 1.0
-    elif not extracted_set and allowed_set:
-        citation_precision = 0.0
-        citation_recall = 0.0
-    elif extracted_set and not allowed_set:
-        citation_precision = 0.0
-        citation_recall = 1.0
-    else: 
-        citation_precision = len(supported_set) / len(extracted_set)
-        citation_recall = len(supported_set) / len(allowed_set)
-
-    if not extracted_set:
-        # 没有实际引用时, 只有当题目也不要求引用的时候, 才算满足citation_supported.
-        citation_supported = not allowed_set
-    else:
-        # 具有实际引用时, 每个实际引用都必须来自允许集合和成功证据.
-        citation_supported = extracted_set.issubset(allowed_set & success_set)
-
-    stop_correct = case.expected_stop_reason == episode.result.stop_reason
-
+    call = first_tool_call(episode)
     if case.expects_no_tool:
-        # case不期待有工具.
-        # 如果没有工具, 算作正确.
-        if tool_call_first is None:
-            tool_selection_correct = True
-            arguments_correct = True
-        else:
-            tool_selection_correct = False
-            arguments_correct = False
+        tool_selection_correct = call is None
+        arguments_correct = call is None
     else:
-        # case期待有工具.
-        # 如果有工具:
-        if tool_call_first is not None:
-            tool_selection_correct = tool_call_first.name == case.expected_tool
-            if tool_selection_correct is True:
-                arguments_correct = _contains_subset(tool_call_first.arguments, case.expected_arguments)
-            else:
-                arguments_correct = False
-        # 如果没有工具: 应当算选择失败和参数失败.
-        else:
-            tool_selection_correct = False
-            arguments_correct = False
+        tool_selection_correct = call is not None and call.name == case.expected_tool
+        arguments_correct = (
+            call is not None
+            and tool_selection_correct
+            and _contains_subset(call.arguments, case.expected_arguments)
+        )
 
     if not episode.result.answer:
         answer_facts_correct = False
     else:
-        answer_facts_correct= all(
-            _contains_answer_fact(episode.result.answer, required_answer_fact)
-            for required_answer_fact in case.required_answer_facts
+        answer_facts_correct = all(
+            _contains_answer_fact(episode.result.answer, fact)
+            for fact in case.required_answer_facts
         )
 
-    # retry_recovered 只认 Executor的 ToolResult.attempts>1；   # 普通Case不要求重试恢复时, 当前结果会是: retry_recovered = False, failure_categories包含retry_recovery
+    citations = _evaluate_citations(case, episode)
+    stop_correct = case.expected_stop_reason == episode.result.stop_reason
     retry_recovered = True
     if case.expects_retry_recovery:
-        retry_recovered =  (
+        retry_recovered = (
             episode.result.stop_reason == StopReason.COMPLETED
-                and any (
-                    result.attempts > 1
-                    for result in episode.result.successful_tool_results
-                )
+            and any(
+                result.attempts > 1
+                for result in episode.result.successful_tool_results
+            )
         )
 
-    task_success = (
-        stop_correct and
-        tool_selection_correct and 
-        arguments_correct and 
-        answer_facts_correct and
-        citation_supported and
-        retry_recovered
+    task_success = all(
+        (
+            stop_correct,
+            tool_selection_correct,
+            arguments_correct,
+            answer_facts_correct,
+            citations.supported,
+            retry_recovered,
+        )
     )
-
     failure_categories = [
         category
-        for category, passed in(
+        for category, passed in (
             ("stop", stop_correct),
             ("tool_selection", tool_selection_correct),
             ("arguments", arguments_correct),
             ("answer_facts", answer_facts_correct),
-            ("citation", citation_supported),
+            ("citation", citations.supported),
             ("retry_recovery", retry_recovered),
         )
         if not passed
     ]
-
     input_tokens, output_tokens, total_tokens = _token_totals(episode)
-
-    return AgentScore(
+    score = AgentScore(
         run_id=episode.run_id,
         case_id=episode.case_id,
-        task_success= task_success,
-        stop_correct= stop_correct,
-        tool_selection_correct= tool_selection_correct,
-        arguments_correct= arguments_correct,
-        answer_facts_correct= answer_facts_correct,
-        citation_precision= citation_precision,
-        citation_recall=citation_recall,
-        citation_supported=citation_supported,
+        task_success=task_success,
+        stop_correct=stop_correct,
+        tool_selection_correct=tool_selection_correct,
+        arguments_correct=arguments_correct,
+        answer_facts_correct=answer_facts_correct,
+        citation_precision=citations.precision,
+        citation_recall=citations.recall,
+        citation_supported=citations.supported,
         retry_recovered=retry_recovered,
         steps=episode.result.steps,
         input_tokens=input_tokens,
         output_tokens=output_tokens,
         total_tokens=total_tokens,
-        latency_ms= episode.latency_ms,
+        latency_ms=episode.latency_ms,
         failure_categories=failure_categories,
     )
+    return score, citations
+
+
+def score_episode(case: AgentEvalCase, episode: AgentEpisode) -> AgentScore:
+    """从原始 RunResult 独立计算单条成绩和失败类别。"""
+
+    score, _citations = _score_episode_with_citations(case, episode)
+    return score
+
 
 def aggregate_scores(
     cases: list[AgentEvalCase],
     episodes: list[AgentEpisode],
 ) -> AgentAggregateReport:
-    """要求每条 Episode 都有已知 case，并按全部 Episode 固定分母聚合。"""
+    """要求身份完整一致，并按各指标真正适用的 Episode 聚合。"""
 
-    # TODO 14c（L2）：先验证 case/run 身份、suite 与完整覆盖，再调用 14b。
-    # 工具、无工具、重试和引用使用各自适用分母；延迟使用 nearest-rank；
-    # 缺失 Episode、未知 case、重复 run_id 都必须拒绝，不能缩小分母。
-    raise NotImplementedError("TODO 14c：固定分母聚合完整 Episode 集")
+    # TODO 14c（L2）：
+    # 1. 拒绝重复 case_id、重复 run_id、未知 case_id、suite 不一致，以及没有
+    #    任何 Episode 覆盖的 Case；不能通过丢弃数据缩小报告分母。
+    # 2. 每条 Episode 只调用一次 _score_episode_with_citations()。它同时返回
+    #    AgentScore 与 _CitationEvaluation，后者已经保存 extracted、allowed 和
+    #    supported 三个计数；聚合阶段不得再次解析回答或工具证据。
+    # 3. task success 使用全部 Episode；工具选择和参数、无工具、重试恢复分别
+    #    使用要求该能力的 Episode。没有适用样本时，该项聚合率记为 0.0。
+    # 4. Citation Precision 使用全局 supported / extracted，Recall 使用全局
+    #    supported / allowed；分母为零时聚合值记为 0.0，不能平均单条比例。
+    # 5. 汇总 Steps、Token、平均延迟、停止原因与失败类别；P50/P95 使用
+    #    nearest-rank：ceil(p * N) - 1，并在排序后的延迟列表中取值。
+    raise NotImplementedError("TODO 14c：聚合完整 Episode 集")
