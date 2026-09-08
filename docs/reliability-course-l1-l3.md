@@ -120,7 +120,8 @@ python -m pytest tests/test_eval_scorer.py -k todo_14b
 - case ID、run ID 唯一；Episode 必须属于已知 case 且 suite 一致；
 - 每个 case 至少有一条 Episode，缺失不能缩小分母；
 - 工具、无工具、重试只使用各自适用 Episode；
-- Citation Precision 分母是全部实际引用，Recall 分母是全部允许引用；
+- Citation Precision 分母是全部实际引用，Recall 分母是全部允许引用；单条与聚合
+  的对应分母为零时均返回 `None`，由 `citation_supported` 单独表达契约是否满足；
 - `_score_episode_with_citations()` 在单条评分时同时返回公开 `AgentScore` 与私有
   `_CitationEvaluation`；后者保存引用聚合所需的三个计数，不进入持久化报告。
   聚合时每条 Episode 只能评分一次，不得再次解析回答或工具证据；

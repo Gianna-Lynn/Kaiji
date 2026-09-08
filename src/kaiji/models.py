@@ -273,7 +273,7 @@ class TraceEvent(BaseModel):
         try:
             json.dumps(self.data, allow_nan=False)
         except (ValueError, TypeError) as exc:
-            raise ValueError("不满足有限JSON, 存在nan/infinity/object")
+            raise ValueError("不满足有限JSON, 存在nan/infinity/object") from exc
         return self
 
 class RunResult(BaseModel):

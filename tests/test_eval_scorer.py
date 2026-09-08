@@ -113,24 +113,24 @@ def test_todo_14b_failed_or_unallowed_citation_cannot_be_success_evidence() -> N
     assert "citation" in score.failure_categories
 
 
-def test_todo_14b_empty_citations_and_empty_allowed_set_are_neutral() -> None:
+def test_todo_14b_empty_citations_and_empty_allowed_set_are_undefined() -> None:
     case = _case().model_copy(update={"allowed_citation_ids": []})
     score = score_episode(case, _episode("Kaiji 使用工具。", case=case))
 
-    assert score.citation_precision == 1.0
-    assert score.citation_recall == 1.0
+    assert score.citation_precision is None
+    assert score.citation_recall is None
     assert score.citation_supported is True
 
 
-def test_todo_14b_missing_required_citations_has_zero_precision_and_recall() -> None:
+def test_todo_14b_missing_required_citations_has_undefined_precision() -> None:
     score = score_episode(_case(), _episode("Kaiji 使用工具。"))
 
-    assert score.citation_precision == 0.0
+    assert score.citation_precision is None
     assert score.citation_recall == 0.0
     assert score.citation_supported is False
 
 
-def test_todo_14b_unrequested_citation_has_zero_precision_but_neutral_recall() -> None:
+def test_todo_14b_unrequested_citation_has_zero_precision_but_undefined_recall() -> None:
     case = _case().model_copy(update={"allowed_citation_ids": []})
     score = score_episode(
         case,
@@ -138,7 +138,7 @@ def test_todo_14b_unrequested_citation_has_zero_precision_but_neutral_recall() -
     )
 
     assert score.citation_precision == 0.0
-    assert score.citation_recall == 1.0
+    assert score.citation_recall is None
     assert score.citation_supported is False
 
 
@@ -270,6 +270,16 @@ def test_todo_14c_aggregate_requires_every_case_and_unique_run_ids() -> None:
     assert report.p50_latency_ms == episode.latency_ms
     assert report.p95_latency_ms == episode.latency_ms
 
+    no_citation_case = case.model_copy(
+        update={"case_id": "no-citation", "allowed_citation_ids": []}
+    )
+    no_citation_report = aggregate_scores(
+        [no_citation_case],
+        [_episode("Kaiji 使用工具。", case=no_citation_case)],
+    )
+    assert no_citation_report.citation_precision is None
+    assert no_citation_report.citation_recall is None
+
     import pytest
 
     with pytest.raises(ValueError, match="缺少 case"):
@@ -368,3 +378,96 @@ def test_todo_14c_aggregate_uses_only_applicable_metric_denominators() -> None:
     assert report.retry_recovery_rate == 0.0
     assert report.citation_precision == 0.5
     assert report.citation_recall == 0.5
+
+
+def test_todo_14c_percentiles_sort_latency_before_nearest_rank() -> None:
+    """P50/P95 必须在排序后的完整 Episode 延迟集合上计算。"""
+
+    case = _case()
+    base_episode = _episode("Kaiji 使用工具。\nCitations: kaiji-001")
+    episodes = [
+        base_episode.model_copy(update={"run_id": "latency-100", "latency_ms": 100.0}),
+        base_episode.model_copy(update={"run_id": "latency-1", "latency_ms": 1.0}),
+        base_episode.model_copy(update={"run_id": "latency-2", "latency_ms": 2.0}),
+    ]
+
+    report = aggregate_scores([case], episodes)
+
+    assert report.p50_latency_ms == 2.0
+    assert report.p95_latency_ms == 100.0
+
+
+def test_todo_14c_aggregate_sums_reported_token_dimensions() -> None:
+    """输入、输出和总 Token 必须分别按 AgentScore 汇总。"""
+
+    case = _case()
+    episode = _episode("Kaiji 使用工具。\nCitations: kaiji-001")
+    calls = [
+        call.model_copy(
+            update={
+                "metadata": call.metadata.model_copy(
+                    update={
+                        "usage": ModelUsage(
+                            input_tokens=3,
+                            output_tokens=7,
+                            total_tokens=10,
+                        )
+                    }
+                )
+            }
+        )
+        for call in episode.result.model_calls
+    ]
+    episode = episode.model_copy(
+        update={
+            "result": episode.result.model_copy(update={"model_calls": calls})
+        }
+    )
+
+    report = aggregate_scores([case], [episode])
+
+    assert report.total_input_tokens == 6
+    assert report.total_output_tokens == 14
+    assert report.total_tokens == 20
+
+
+def test_todo_14c_applicable_metric_denominator_is_not_hidden_by_symmetric_samples() -> None:
+    """工具样本失败、无工具样本成功时，两个指标必须分别使用各自分母。"""
+
+    tool_case = _case().model_copy(
+        update={"case_id": "tool-case", "expected_tool": "different_tool"}
+    )
+    tool_episode = _episode(
+        "Kaiji 使用工具。",
+        case=tool_case,
+    ).model_copy(update={"run_id": "tool-run"})
+    no_tool_case = AgentEvalCase(
+        case_id="no-tool-case",
+        semantic_group="no-tool",
+        suite="behavior",
+        prompt="直接回答。",
+        expected_stop_reason=StopReason.COMPLETED,
+        expects_no_tool=True,
+    )
+    no_tool_result = AgentRuntime(
+        ScriptedDecisionProvider(
+            [ModelAction(kind="final_answer", final_answer="收到")]
+        ),
+        ToolExecutor(_registry()),
+    ).run(no_tool_case.prompt)
+    no_tool_episode = AgentEpisode(
+        run_id="no-tool-run-2",
+        case_id=no_tool_case.case_id,
+        suite=no_tool_case.suite,
+        repeat_index=0,
+        latency_ms=1.0,
+        result=no_tool_result,
+    )
+
+    report = aggregate_scores(
+        [tool_case, no_tool_case], [tool_episode, no_tool_episode]
+    )
+
+    assert report.tool_selection_accuracy == 0.0
+    assert report.argument_accuracy == 0.0
+    assert report.no_tool_accuracy == 1.0

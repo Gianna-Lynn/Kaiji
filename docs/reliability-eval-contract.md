@@ -107,8 +107,8 @@ case 允许引用集合与 `successful_tool_results` 中已校验证据时计为
 
 工具选择与参数准确率只以要求工具的 Episode 为分母；无工具准确率只以
 `expects_no_tool` 为分母；重试恢复只以 `expects_retry_recovery` 为分母。Citation
-Precision 使用全部实际引用数，Recall 使用全部允许引用数；没有适用项时报告 `0.0`，
-不得把不适用样本先记成满分再平均。
+Precision 使用全部实际引用数，Recall 使用全部允许引用数；单条或聚合的对应分母
+为零时返回 `None`（JSON 中为 `null`），不得把不适用样本记成满分或零分。
 
 单条评分必须同时产出公开成绩和引用聚合所需的实际、允许、受支持三个计数；这些
 计数属于内部充分统计量，不进入持久化成绩格式。聚合不得再次解析同一 Episode。
