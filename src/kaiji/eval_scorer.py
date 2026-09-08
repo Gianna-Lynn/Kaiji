@@ -29,8 +29,8 @@ class AgentScore(BaseModel):
     tool_selection_correct: bool                     # 是否选择了期望的工具
     arguments_correct: bool                           # 工具参数是否符合期望
     answer_facts_correct: bool                        # 回答是否包含全部目标事实
-    citation_precision: float                         # 实际引用中受支持引用的比例
-    citation_recall: float                            # 成功证据被引用的覆盖比例
+    citation_precision: float | None                  # 实际引用中受支持引用的比例；无实际引用时未定义
+    citation_recall: float | None                     # 成功证据被引用的覆盖比例；无允许引用时未定义
     citation_supported: bool                          # 回答中出现的所有引用，是否都来自本次运行成功且经过校验的工具证据。
     retry_recovered: bool                             # 重试后是否恢复成功
     steps: int                                        # Episode 执行的步骤数
@@ -50,8 +50,8 @@ class AgentAggregateReport(BaseModel):
     argument_accuracy: float
     no_tool_accuracy: float
     retry_recovery_rate: float
-    citation_precision: float
-    citation_recall: float
+    citation_precision: float | None
+    citation_recall: float | None
     average_steps: float
     total_input_tokens: int
     total_output_tokens: int
@@ -67,8 +67,8 @@ class AgentAggregateReport(BaseModel):
 class _CitationEvaluation:
     """保存单条引用评分及聚合所需计数，不进入公开报告格式。"""
 
-    precision: float
-    recall: float
+    precision: float | None
+    recall: float | None
     supported: bool
     extracted_count: int
     allowed_count: int
@@ -181,12 +181,8 @@ def _evaluate_citations(
     evidence = _evidence_ids(episode.result.successful_tool_results)
     supported = allowed & extracted & evidence
 
-    precision = (
-        len(supported) / len(extracted)
-        if extracted
-        else (1.0 if not allowed else 0.0)
-    )
-    recall = len(supported) / len(allowed) if allowed else 1.0
+    precision = len(supported) / len(extracted) if extracted else None
+    recall = len(supported) / len(allowed) if allowed else None
     citations_supported = (
         extracted.issubset(allowed & evidence)
         and (bool(extracted) or not allowed)
@@ -411,10 +407,10 @@ def aggregate_scores(
             [score.retry_recovered for score in retry_scores]
         ),
         citation_precision=(
-            supported_count / extracted_count if extracted_count else 0.0
+            supported_count / extracted_count if extracted_count else None
         ),
         citation_recall=(
-            supported_count / allowed_count if allowed_count else 0.0
+            supported_count / allowed_count if allowed_count else None
         ),
         average_steps=(sum(score.steps for score in scores) / count if count else 0.0),
         total_input_tokens=sum(score.input_tokens for score in scores),
