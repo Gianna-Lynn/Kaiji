@@ -24,5 +24,8 @@ where = ["src"]
 [tool.pytest.ini_options]
 pythonpath = ["src"]
 testpaths = ["tests"]
-addopts = "-q --basetemp=.local-pytest-tmp"
-cache_dir = ".local-pytest-cache"
+addopts = "-q"
+cache_dir = ".cache"
+
+[tool.ruff]
+cache-dir = ".cache/ruff"

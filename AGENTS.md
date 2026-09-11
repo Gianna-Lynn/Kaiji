@@ -22,7 +22,7 @@ Kaiji 的核心对象是 Message、Tool、AgentState、Workflow、Checkpoint、T
 - 推荐验证顺序：单元测试 → Runtime 小闭环 → Trace/Eval 回归 → Mock Adapter → Azusa Adapter → Demo。
 - 失败必须结构化，重试必须有界，循环必须有最大步数和明确停止原因。
 - 修改前先检查工作区状态，保留用户已有改动，不做无关重构。
-- Codex 在 Windows 隔离环境运行 pytest 时，必须额外传入 `--basetemp=.codex-pytest-tmp -o cache_dir=.codex-pytest-cache`，不得创建或复用用户终端使用的 `.local-pytest-tmp` 与 `.local-pytest-cache`，避免不同安全上下文生成互不可访问的 ACL。
+- Codex 在 Windows 隔离环境运行 pytest 时，默认不显式传入 `--basetemp`，让 pytest 使用系统临时目录中的唯一运行目录；需要隔离缓存时，先确保 `.cache` 存在，再把 `cache_dir` 指向 `.cache/codex-pytest-<唯一运行标识>`。不得创建或复用项目根目录下的 pytest 临时目录，也不得与用户终端或其他并发代理共享 `basetemp`，避免不同安全上下文生成互不可访问的 ACL 以及并发清理互相干扰。禁止代理自行在根目录追加带后缀的 pytest 缓存目录。
 - 所有 Git commit 的提交说明必须使用中文。
 - “测试通过”只证明已覆盖断言通过；只有测试、书面契约、状态不变量和代码审查同时通过，才能宣告教学 TODO 完成。
 
