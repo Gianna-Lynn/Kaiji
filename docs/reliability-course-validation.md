@@ -3,7 +3,17 @@
 本记录区分答案绿灯、练习红灯、既有能力回归和默认全量状态。它不能替代学习者完成
 TODO 后的再次验收，也不把 skip 当作 TODO12 通过。
 
+## 时点与提交范围
+
+本文其余章节中的答案/课程分支数字是历史验收快照，不应直接当作当前 `main` 的状态。
+当前工作树核对快照记录于 2026-09-13，`HEAD=2c50022`：606 collected、19 failed、1
+skipped；586 passed 是由总数扣除推算，未直接读到 pytest 最终汇总行。该快照还受
+Windows 临时目录 ACL 问题及未提交工作区改动影响，正式结论仍需重新运行对应命令。
+
 ## 答案分支
+
+以下数字沿用原验收记录；原记录未固化对应日期和提交号，只能作为历史参考，不能用于
+判断当前 `main`。
 
 - 收集：546 tests；
 - 结果：545 passed、1 skipped；
@@ -58,18 +68,21 @@ TODO 后的再次验收，也不把 skip 当作 TODO12 通过。
 `src/kaiji/adapters/azusa.py` 与 `src/kaiji/azusa_tools.py` 未提交修改没有被复制、覆盖、
 暂存或删除。课程提交不应直接强推到 main；合并前必须先处理这两个文件的重叠差异。
 
-## main 安全整理记录
+## main 安全整理记录（历史）
 
-课程三笔提交已整理进 `main`，随后按完整 blob 快照恢复人的 TODO7 在途文件。合并前原始
+课程三笔提交曾整理进 `main`，随后按完整 blob 快照恢复人的 TODO7 在途文件。合并前原始
 快照固定保存在带说明的 stash 中；两个文件的 blob hash 已逐项核对一致。曾用于整理的
 临时备份分支已经删除，不属于长期分支拓扑。
+
+本节描述的是当时的整理过程；当前 `main` 已不应再被描述为保留 TODO7 在途文件，具体
+进度以本文“时点与提交范围”及 `AGENTS.md` 的当前快照说明为准。
 
 原始 `azusa.py` 在 TODO7c 的在途 `try` 后尚未写 `except/finally`，会导致整个模块无法
 导入。main 工作树只增加了语义中性的 `finally: pass` 以闭合语法：它不吞异常、不完成
 TODO7，也不改变正常路径落入原 `NotImplementedError` 的行为。原始逐字版本仍由 stash
 保存。
 
-整理后验证：
+整理后验证（旧快照）：
 
 - `compileall` 通过，546 tests 可以完整收集；
 - TODO1—6 的 Scaffold/Registry/Executor/Runtime 共 53 passed；

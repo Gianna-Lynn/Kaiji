@@ -20,3 +20,4 @@ htmlcov/
 artifacts/
 *.sqlite
 *.sqlite3
+.dsh/

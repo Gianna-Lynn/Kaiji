@@ -7,8 +7,12 @@ import hashlib
 import json
 import math
 import numbers
+import os
+from collections import Counter
 from pathlib import Path
 from typing import Any
+from uuid import uuid4
+import shutil
 
 from pydantic import BaseModel, ConfigDict, Field, StrictInt, field_validator, model_validator
 
@@ -16,7 +20,7 @@ from kaiji.adapters.azusa import AzusaHttpAdapter, ChunkResponse, MockAzusaAdapt
 from kaiji.azusa_tools import build_azusa_registry
 from kaiji.demo import ScriptedDecisionProvider, build_registry
 from kaiji.eval_runner import AgentEvalCase, AgentEvalRunner, AgentEpisode
-from kaiji.eval_scorer import AgentAggregateReport, score_episode
+from kaiji.eval_scorer import AgentAggregateReport, AgentScore, score_episode, aggregate_scores
 from kaiji.faults import (
     HttpFaultStep,
     ScriptedHttpTransport,
@@ -361,12 +365,38 @@ class ExperimentRunner:
     def __init__(self, config: ExperimentConfig, runner: AgentEvalRunner) -> None:
         self._config = config
         self._runner = runner
+    @staticmethod
+    def _markdown_report(report: ExperimentReport) -> str:
+        """生成人类可读的实验摘要，明确标注离线 Scripted。"""
+        aggregate = report.aggregate
+        lines = [
+            f"# Kaiji Experiment {report.experiment_id[:8]}",
+            "",
+            f"- Suite: `{report.config.suite}`",
+            f"- Harness: `{report.config.harness}`",
+            f"- Episodes: {report.actual_episode_count}/{report.expected_episode_count}",
+            "",
+            f"- Task Success: {aggregate.task_success_rate:.2%}",
+            f"- Avg Steps: {aggregate.average_steps:.2f}",
+            f"- Estimated Cost: ${report.estimated_cost_usd:.6f}",
+            f"- Avg Latency: {aggregate.average_latency_ms:.1f} ms",
+            "",
+            "> 离线 Scripted 运行，不代表真实模型成绩。",
+            "",
+        ]
+        return "\n".join(lines)
 
     def run(self, cases: list[AgentEvalCase], output_dir: Path) -> ExperimentReport:
         """运行、评分并写入 JSONL、JSON、Markdown 和 Bad Case。"""
         # TODO 15b（L3）：执行 case×repeat 完整矩阵，拒绝空数据、数量不全和
         # 重复 run_id；独立评分后计算数据/config hash、成本、Bad Case 与场景
         # 分布，最后写入不可覆盖的新实验目录。部分结果不得标为 complete。
+        if not cases:
+            raise ValueError("实验至少需要一条 case")
+        case_ids = [case.case_id for case in cases]
+        if len(case_ids) != len(set(case_ids)):
+            raise ValueError("case_id 必须唯一")
+        
         episodes : list[AgentEpisode] = []
         id_to_case : dict[str,AgentEvalCase] = {}
         for case in cases:
@@ -385,22 +415,105 @@ class ExperimentRunner:
                 raise ValueError("run_id必须唯一")
 
         scores = []
+        bad_case_run_ids = []
         for episode in episodes:
             score = score_episode(id_to_case[episode.case_id] ,episode)
             scores.append(score)
-        
-        #aggregate_scores()
-        #     ↓
-        # ExperimentReport
+            if not score.task_success:
+                bad_case_run_ids.append(score.run_id)
 
+        agent_agg_report = aggregate_scores(cases, episodes)
+        exp_report = ExperimentReport(
+            experiment_id=uuid4().hex,
+            config=self._config,
+            config_fingerprint=_fingerprint(self._config.model_dump(mode="json")),
+            dataset_hash=_fingerprint([case.model_dump(mode="json") for case in cases]),
+            expected_episode_count=len(cases) * self._config.repeats,
+            bad_case_run_ids=bad_case_run_ids,
+            scenario_distribution=dict(Counter(case.scenario for case in cases)),   # 字典: 场景 → 出现次数。
+            actual_episode_count=len(episodes),
+            complete=True,
+            estimated_cost_usd=(
+                (agent_agg_report.total_input_tokens * self._config.input_cost_per_million +
+                agent_agg_report.total_output_tokens * self._config.output_cost_per_million)
+                /1000000
+            ),
+            aggregate=agent_agg_report,
+        )
+        self._write(output_dir, exp_report, episodes, scores)
+        return exp_report
 
     @staticmethod
-    def _write(output_dir, report, episodes, scores) -> None:
-        """写入新实验目录，已有目录不覆盖。"""
-        # TODO 15b（L3）：落盘 episodes.jsonl、report.json、report.md 与
+    def _write(output_dir: Path, report:ExperimentReport, episodes: list[AgentEpisode], scores: list[AgentScore]) -> None:
+        """写入新实验目录，已有目录不覆盖。
+        参数说明:
+        output_dir：所有实验输出的根目录
+        report：外层 ExperimentReport
+        episodes：每次运行的 AgentEpisode
+        scores：每个 episode 对应的 Score
+        """
+        # TODO 15b（L3）：落盘 episodes.jsonl、report.json、report.md 和                                                                                                                                                                       rt.md 与
         # bad_cases.json。目录必须新建且不可覆盖；Bad Case 同时保留原始 Episode
         # 与确定性 Score，Markdown 不得夸大为公开 Benchmark。
-        raise NotImplementedError("TODO 15b：写入完整且可审计的实验产物")
+
+        staging_dir = output_dir / f"{report.experiment_id}.staging"
+        if staging_dir.exists():
+            raise FileExistsError("临时目录已存在, 拒绝覆盖")
+        staging_dir.mkdir(parents=True, exist_ok=False)
+
+        try:
+            # 这里放四个 write_text 调用
+            # JSONL: 每个Episode必须独占一行.
+            (staging_dir / "episodes.jsonl").write_text(
+                "".join(episode.model_dump_json() + "\n" for episode in episodes),
+                encoding="utf-8",
+            )
+            # 普通 JSON 字符串
+            (staging_dir / "report.json").write_text(
+                report.model_dump_json(indent=2),
+                encoding="utf-8",
+            )
+            # Markdown 字符串
+            (staging_dir / "report.md").write_text(
+                ExperimentRunner._markdown_report(report),
+                encoding="utf-8",
+            )
+
+            # 创建score_ids的时候,  如果两个score的run_id相同, 前一个run_id就会被静默覆盖.
+            # 需要进行校验.
+            if len(scores) != len(episodes):
+                raise ValueError("Score 数量必须与 Episode 数量一致")
+
+            score_ids = [score.run_id for score in scores]
+            episode_ids = [episode.run_id for episode in episodes]
+
+            if len(score_ids) != len(set(score_ids)):
+                raise ValueError("Score 的 run_id 必须唯一")
+
+            if set(score_ids) != set(episode_ids):
+                raise ValueError("Score 与 Episode 的 run_id 必须一一对应")
+
+            # 正式创建scores_by_run_id
+            scores_by_run_id: dict[str, AgentScore] = {score.run_id : score for score in scores}
+            bad_cases = [
+                {
+                    "episode" : episode.model_dump(mode="json"),
+                    "score" : scores_by_run_id[episode.run_id].model_dump(mode="json"),
+                }
+                for episode in episodes
+                if episode.run_id in report.bad_case_run_ids
+            ]
+            (staging_dir / "bad_cases.json").write_text(
+                json.dumps(bad_cases, ensure_ascii=False, indent=2),
+                encoding="utf-8"
+            )
+            target_dir =  output_dir / report.experiment_id
+            if target_dir.exists():
+                raise FileExistsError("实验目录已存在, 拒绝覆盖")
+            os.replace(staging_dir, target_dir)
+        except Exception:
+            shutil.rmtree(staging_dir, ignore_errors=True)
+            raise
 
 
 def run_ablation(

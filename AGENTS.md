@@ -1,7 +1,5 @@
 # Kaiji 协作规则
 
-自称“大橘”，称呼用户为“人”，适量使用颜文字。
-
 ## 项目边界
 
 Kaiji 是独立的 Agent 应用工程实验项目，位于 Azusa 的上层。Azusa 负责 Rust HNSW、RAG、Hybrid、Rerank 与 Citation；Kaiji 通过 HTTP/tool adapter 调用 Azusa，不复制其内部实现。
@@ -22,7 +20,7 @@ Kaiji 的核心对象是 Message、Tool、AgentState、Workflow、Checkpoint、T
 - 推荐验证顺序：单元测试 → Runtime 小闭环 → Trace/Eval 回归 → Mock Adapter → Azusa Adapter → Demo。
 - 失败必须结构化，重试必须有界，循环必须有最大步数和明确停止原因。
 - 修改前先检查工作区状态，保留用户已有改动，不做无关重构。
-- Codex 在 Windows 隔离环境运行 pytest 时，默认不显式传入 `--basetemp`，让 pytest 使用系统临时目录中的唯一运行目录；需要隔离缓存时，先确保 `.cache` 存在，再把 `cache_dir` 指向 `.cache/codex-pytest-<唯一运行标识>`。不得创建或复用项目根目录下的 pytest 临时目录，也不得与用户终端或其他并发代理共享 `basetemp`，避免不同安全上下文生成互不可访问的 ACL 以及并发清理互相干扰。禁止代理自行在根目录追加带后缀的 pytest 缓存目录。
+- Codex 在 Windows 隔离环境运行 pytest 时，必须显式传入独立的 `--basetemp=.cache/codex-pytest-<唯一运行标识>`，并在需要隔离缓存时把 `cache_dir` 指向 `.cache/codex-pytest-<唯一运行标识>`；不得复用用户终端的 `.local-pytest-tmp` 或与其他并发代理共享 `basetemp`，避免不同安全上下文生成互不可访问的 ACL 以及并发清理互相干扰。禁止代理在项目根目录追加带后缀的 pytest 目录。
 - 所有 Git commit 的提交说明必须使用中文。
 - “测试通过”只证明已覆盖断言通过；只有测试、书面契约、状态不变量和代码审查同时通过，才能宣告教学 TODO 完成。
 
@@ -65,10 +63,9 @@ Kaiji 的核心对象是 Message、Tool、AgentState、Workflow、Checkpoint、T
 
 - TODO6 已完成上一轮结构修复和分支同步；本轮独立静态复审发现的严格审批路由、窄测试覆盖、Checkpoint 自定义枚举序列化、`max_steps` 运行时类型校验和暂停线程复用测试缺口均已修复。TODO8—TODO12 仍未按新版独立审计方法重新审计，继续保留下面的未审计声明。
 - TODO7 已完成本轮独立审计和分支同步；TODO8—TODO12 仍未按新版独立审计方法重新审计，不得据此宣称其完整。
-- TODO8—TODO12 的答案设计已经在隔离答案分支冻结；练习分支仍保持未完成状态。TODO11d/11e 已拆成 `_align_observations()` 与 `_aggregate_aligned()` 两个独立骨架，必须分别验收。
-- TODO13—TODO15 已按 L1 Provider、L2 Runner/Scorer/SQLite、L3 Reliability Experiment 挖出课程脚手架。答案分支对应窄测试必须全绿；练习分支 13a—15d 必须分别精确红灯。真实模型与 Azusa Live 不属于默认练习回归。
-- 当前反向验收结果：答案 546 collected、545 passed、1 live skipped；课程 400 passed、145 个预期 TODO 失败、1 live skipped。13a—15d 已逐项验证答案绿灯与课程精确红灯，详见 `docs/reliability-course-validation.md`。
-- main 已保留用户 TODO7 在途文件；因此当前 main 上 TODO15d 会按真实依赖先落到 TODO7d，不得误报为 15d 脚手架缺陷。TODO7 完成后再复验 15d 独立红灯。
+- TODO8—TODO12 在当前 main 已有实现，但尚未按新版独立审计方法重新审计；TODO11d/11e 已拆成 `_align_observations()` 与 `_aggregate_aligned()` 两个独立边界，必须分别验收。
+- TODO7、TODO13 与 TODO14 已进入当前 main 的提交历史；TODO15 仍在进行中，当前仍存在 TODO15c/15d 的明确未实现入口，15a/15b 还必须继续按当前契约和测试核对。真实模型与 Azusa Live 不属于默认离线回归。
+- 当前工作树核对快照（2026-09-13，`HEAD=2c50022`）：606 collected、19 failed、1 skipped；586 passed 是由总数扣除推算，未直接读到 pytest 最终汇总行。该数字受当日 Windows ACL 清理和未提交工作区改动的时点影响，不能替代重新验收。
 
 ## Reliability 课程分级
 
