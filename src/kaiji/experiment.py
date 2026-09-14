@@ -15,8 +15,8 @@ from pydantic import BaseModel, ConfigDict, Field, StrictInt, field_validator, m
 from kaiji.adapters.azusa import AzusaHttpAdapter, ChunkResponse, MockAzusaAdapter
 from kaiji.azusa_tools import build_azusa_registry
 from kaiji.demo import ScriptedDecisionProvider, build_registry
-from kaiji.eval_runner import AgentEvalCase, AgentEvalRunner
-from kaiji.eval_scorer import AgentAggregateReport
+from kaiji.eval_runner import AgentEvalCase, AgentEvalRunner, AgentEpisode
+from kaiji.eval_scorer import AgentAggregateReport, score_episode
 from kaiji.faults import (
     HttpFaultStep,
     ScriptedHttpTransport,
@@ -367,7 +367,32 @@ class ExperimentRunner:
         # TODO 15b（L3）：执行 case×repeat 完整矩阵，拒绝空数据、数量不全和
         # 重复 run_id；独立评分后计算数据/config hash、成本、Bad Case 与场景
         # 分布，最后写入不可覆盖的新实验目录。部分结果不得标为 complete。
-        raise NotImplementedError("TODO 15b：实现可复现实验矩阵与报告")
+        episodes : list[AgentEpisode] = []
+        id_to_case : dict[str,AgentEvalCase] = {}
+        for case in cases:
+            id_to_case[case.case_id] = case
+            for repeat_index in range(self._config.repeats):
+                episode = self._runner.run(case=case, repeat_index=repeat_index)
+                episodes.append(episode)
+        if len(episodes) != len(cases) * self._config.repeats:
+            raise ValueError("Episode 数量必须等于 len(cases) * config.repeats")
+
+        seen_run_ids = set()
+        for episode in episodes:
+            if episode.run_id not in seen_run_ids:
+                seen_run_ids.add(episode.run_id)
+            else:
+                raise ValueError("run_id必须唯一")
+
+        scores = []
+        for episode in episodes:
+            score = score_episode(id_to_case[episode.case_id] ,episode)
+            scores.append(score)
+        
+        #aggregate_scores()
+        #     ↓
+        # ExperimentReport
+
 
     @staticmethod
     def _write(output_dir, report, episodes, scores) -> None:

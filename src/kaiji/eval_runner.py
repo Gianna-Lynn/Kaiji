@@ -82,7 +82,7 @@ class AgentEvalCase(BaseModel):
 
 
 class AgentEpisode(BaseModel):
-    """保存一次不可丢失原始结果的 Agent 执行记录。"""
+    """保存一次 Agent 执行的完整记录，确保运行结果及其上下文可追溯。"""
 
     model_config = ConfigDict(extra="forbid")
 
@@ -103,7 +103,7 @@ class AgentEpisode(BaseModel):
         return value
 
 # 语法上：Callable[[参数类型列表], 返回类型] 表示“赋值号左边这个可调用对象的类型”；
-# 右侧的 [AgentEvalCase] 是仅含一个参数类型 AgentEvalCase 的类型列表，
+# 右侧的 [AgentEvalCase] 是一个参数类型列表，里面只包含一个元素, 这个元素的数据类型是AgentEvalCase.
 # 逗号后的 DecisionProvider 表示该可调用对象返回 DecisionProvider。
 ProviderFactory = Callable[[AgentEvalCase], DecisionProvider]
 ExecutorFactory = Callable[[AgentEvalCase], ToolExecutor]
@@ -115,7 +115,7 @@ class AgentEvalRunner:
         self,
         provider_factory: ProviderFactory,  # 按用例创建决策提供器。
         executor_factory: ExecutorFactory,  # 按用例创建工具执行器。
-        *,
+        *,  
         duplicate_guard: bool = True,       # 是否启用重复调用防护。
     ) -> None:
         self._provider_factory = provider_factory
@@ -123,7 +123,11 @@ class AgentEvalRunner:
         self._duplicate_guard = duplicate_guard
 
     def run(self, case: AgentEvalCase, *, repeat_index: int = 0) -> AgentEpisode:
-        """运行单条 case；工厂按 case 调用以避免故障状态跨 case 泄漏。"""
+        """运行单条评测用例, 返回完整的执行记录Episode。
+
+        每次运行都会根据当前用例重新创建决策提供器和工具执行器，以隔离不同用例之间的状态.
+        返回值Episode包含唯一运行标识、重复序号、墙钟耗时以及未经删减的 Runtime 结果。
+        """
         # TODO 14a（L2）：严格验证 repeat_index；每条 case 都重新调用两个工厂，
         # 用 case.max_steps 和本 Runner 的 duplicate_guard 运行真实 AgentRuntime；
         # 保存唯一 run_id、墙钟延迟及未经删减的 RunResult。
