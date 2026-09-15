@@ -167,6 +167,8 @@ class AgentRuntime:
                 ensure_ascii=False,
             )
             if self._duplicate_guard and signature in seen_calls:   # 检查工具调用是否重复.
+                # harness生效位置:duplicate_guard=True：第二次相同工具调用不会执行；
+                #                duplicate_guard=False：允许继续执行，但仍受 max_steps 限制。
                 trace.append(
                     TraceEvent(
                         step=step,

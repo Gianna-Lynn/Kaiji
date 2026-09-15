@@ -142,7 +142,7 @@ class ToolExecutor:
                 attempts=0,
             )
 
-        attempts_allowed = (definition.max_retries if self._retry_enabled else 0) + 1
+        attempts_allowed = (definition.max_retries if self._retry_enabled else 0) + 1   # harness生效位置: 如果retry_enabled = False, 最多尝试1次. 
         for attempt in range(1, attempts_allowed + 1):
             try:
                 raw_result = self._invoke_with_timeout(definition, arguments)
@@ -194,7 +194,7 @@ class ToolExecutor:
                     retryable=False,
                 )
 
-            if not failure.retryable or attempt == attempts_allowed:
+            if not failure.retryable or attempt == attempts_allowed:    # harness生效位置: 决定失败后是否继续.
                 return ToolResult(
                     call_id=call.call_id,
                     tool_name=call.name,

@@ -38,15 +38,15 @@ class ExperimentConfig(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
-    provider: str = Field(default="scripted", min_length=1)
-    harness: HarnessVariant = HarnessVariant.FULL_KAIJI
-    suite: str = Field(min_length=1)
-    repeats: StrictInt = Field(default=1, ge=1)
-    model: str = "scripted"
-    temperature: float = 0.0
-    max_steps: StrictInt = Field(default=4, ge=1)
-    input_cost_per_million: float = Field(default=0.0, ge=0, allow_inf_nan=False)
-    output_cost_per_million: float = Field(default=0.0, ge=0, allow_inf_nan=False)
+    provider: str = Field(default="scripted", min_length=1)       # 模型服务提供方
+    harness: HarnessVariant = HarnessVariant.FULL_KAIJI           # 指定实验采用的 Harness 变体
+    suite: str = Field(min_length=1)                              # 要运行的评测套件
+    repeats: StrictInt = Field(default=1, ge=1)                   # 每个评测用例的重复运行次数
+    model: str = "scripted"                                       # 提供方使用的模型名称
+    temperature: float = 0.0                                      # 模型采样温度
+    max_steps: StrictInt = Field(default=4, ge=1)                 # 限制单个智能体回合的最大步数
+    input_cost_per_million: float = Field(default=0.0, ge=0, allow_inf_nan=False)  # 设置每百万输入 token 的成本
+    output_cost_per_million: float = Field(default=0.0, ge=0, allow_inf_nan=False) # 设置每百万输出 token 的成本
 
     @field_validator("repeats", "max_steps", mode="before")
     @classmethod
@@ -77,17 +77,17 @@ class ExperimentConfig(BaseModel):
 class ExperimentReport(BaseModel):
     """保存可验证完整性的实验配置、数据指纹和聚合结果。"""
 
-    experiment_id: str
-    config: ExperimentConfig
-    config_fingerprint: str
-    dataset_hash: str
-    expected_episode_count: int
-    actual_episode_count: int
-    complete: bool
-    estimated_cost_usd: float
-    aggregate: AgentAggregateReport
-    bad_case_run_ids: list[str]
-    scenario_distribution: dict[str, int]
+    experiment_id: str                    # 实验唯一标识
+    config: ExperimentConfig              # 实验运行配置
+    config_fingerprint: str               # 配置内容指纹
+    dataset_hash: str                      # 数据集内容哈希
+    expected_episode_count: int           # 预期 Episode 数量
+    actual_episode_count: int             # 实际完成的 Episode 数量
+    complete: bool                         # 是否完成全部实验
+    estimated_cost_usd: float              # 预估成本（美元）
+    aggregate: AgentAggregateReport         # 聚合评估结果
+    bad_case_run_ids: list[str]             # 失败或异常案例的运行 ID
+    scenario_distribution: dict[str, int]  # 各场景的案例数量分布
 
     @model_validator(mode="after")
     def require_complete_formal_report(self) -> "ExperimentReport":
@@ -100,11 +100,11 @@ class ExperimentReport(BaseModel):
         return self
 
 
-class AblationReport(BaseModel):
-    """汇总同数据、同模型配置下四种 Harness 的受控结果。"""
+class AblationReport(BaseModel):    
+    """Ablation: 消融. 本函数汇总同数据、同模型配置下四种 Harness 的受控结果。"""
 
     dataset_hash: str
-    suite: str
+    suite: str              # 运行时使用的评测套件
     reports: dict[HarnessVariant, ExperimentReport]
 
 
@@ -190,6 +190,9 @@ def _scripted_actions(case: AgentEvalCase) -> list[ModelAction]:
         "network",
         "invalid_json",
     }:
+        # 除了citation以外, 其他的错误场景在这里并没有分别被处理.
+        # 这个地方仅模拟了 搜索工具调用 和 最终回答 这两步.
+        # 具体的HTTP, 网络或JSON错误, 由后续的工具执行/校验逻辑处理.
         answer_fact = "；".join(case.required_answer_facts) or "Kaiji 使用工具。"
         citation = (
             case.allowed_citation_ids[0] if case.allowed_citation_ids else "kaiji-001"
@@ -528,8 +531,78 @@ def run_ablation(
     # TODO 15c（L3）：四种 Harness 必须使用同一 case、模型动作、温度、
     # 最大步骤和重复次数，只切换 retry/duplicate guard。校验 dataset hash 一致，
     # 写入 JSON 与包含成功率、恢复率、Steps、延迟的 Markdown 对照表。
-    raise NotImplementedError("TODO 15c：运行受控 Harness Ablation")
+    
+    output_dir.mkdir(parents=True, exist_ok=True)
+    
+    base_config = ExperimentConfig(
+        provider="scripted",
+        model="scripted",
+        temperature=0.0,
+        suite=suite,
+        repeats=repeats,
+    )
 
+    reports: dict[HarnessVariant, ExperimentReport] = {}
+    for variant in HarnessVariant:
+        config = base_config.model_copy(
+            update={"harness": variant}
+        )
+
+        reports[variant] = ExperimentRunner(
+            config, 
+            build_scripted_runner(config.harness)
+        ).run(
+            cases, 
+            output_dir / variant.value,
+        )
+
+    dataset_hash_list = []
+    for _, report in reports.items():
+        dataset_hash_list.append(report.dataset_hash)
+    base = dataset_hash_list[0]
+
+    for i in range (1, len(dataset_hash_list)):
+        if dataset_hash_list[i] != base:
+            raise ValueError("所有报告的数据集哈希应当完全相同")
+
+    ablation_report = AblationReport(
+        dataset_hash=_fingerprint([case.model_dump(mode="json") for case in cases]),
+        suite=suite,
+        reports=reports,
+    )
+    if (output_dir / "ablation.json").exists():
+        raise FileExistsError("ablation.json目录已存在, 拒绝覆盖")
+    if (output_dir / "ablation.md").exists():
+        raise FileExistsError("ablation.md目录已存在, 拒绝覆盖")
+    
+    (output_dir / "ablation.json").write_text(
+        ablation_report.model_dump_json(indent=2),
+        encoding="utf-8",
+    )
+
+    lines = [
+        "# Harness Ablation",
+        "",
+        "| Harness | Task Success | Retry Recovery | Avg Steps | Avg Latency ms |",
+        "|---|---:|---:|---:|---:|",
+    ]
+    for variant, report in reports.items():
+        aggregate = report.aggregate
+        lines.append(f"| {variant.value}| {aggregate.task_success_rate:.2%} | {aggregate.retry_recovery_rate:.2%} | {aggregate.average_steps:.2f} | {aggregate.average_latency_ms:.1f} |")
+    lines.extend(
+        [
+            "",
+            "> 离线 Scripted 运行，不代表真实模型成绩。",
+            "",
+        ]
+    )
+    markdown_content = "\n".join(lines)
+
+    (output_dir / "ablation.md").write_text(
+        markdown_content,
+        encoding="utf-8",
+    )
+    return ablation_report
 
 def main() -> None:
     """提供默认不联网、不消费额度的 Scripted 实验入口。"""
