@@ -113,7 +113,9 @@ class FormalRunConfig(BaseModel):
 
 
 class FormalManifest(BaseModel):
-    """保存不可在恢复时悄然变化的实验身份与矩阵边界。"""
+    """
+    manifest: 表明的, 清楚的, 显而易见的.
+    保存不可在恢复时悄然变化的实验身份与矩阵边界。"""
 
     model_config = ConfigDict(extra="forbid")
 
@@ -127,16 +129,18 @@ class FormalManifest(BaseModel):
 
 
 class RequestLedgerState(BaseModel):
-    """保守记录已开始请求；未完成请求也永久占用硬预算。"""
+    """
+    ledger: 账簿.
+    保守记录已开始请求；未完成请求也永久占用硬预算。"""
 
     model_config = ConfigDict(extra="forbid")
 
-    schema_version: StrictInt = 1
-    requests_started: StrictInt = Field(default=0, ge=0)
-    responses_finished: StrictInt = Field(default=0, ge=0)
-    input_tokens: StrictInt = Field(default=0, ge=0)
-    output_tokens: StrictInt = Field(default=0, ge=0)
-    consecutive_abnormal: StrictInt = Field(default=0, ge=0)
+    schema_version: StrictInt = 1                           # 账本数据结构的版本号。
+    requests_started: StrictInt = Field(default=0, ge=0)    # 已开始的请求总数。
+    responses_finished: StrictInt = Field(default=0, ge=0)  # 已完成响应的请求总数。
+    input_tokens: StrictInt = Field(default=0, ge=0)        # 已完成请求累计消耗的输入 token 数。
+    output_tokens: StrictInt = Field(default=0, ge=0)       # 已完成请求累计消耗的输出 token 数。
+    consecutive_abnormal: StrictInt = Field(default=0, ge=0)  # 连续出现异常响应的次数。
 
 
 class PersistentRequestLedger:
@@ -170,6 +174,13 @@ class PersistentRequestLedger:
 
         if self.state.responses_finished >= self.state.requests_started:
             raise ValueError("请求账本损坏：没有对应 started 的待完成请求")
+        # requests_started: 已经记录, 准备发起的请求数.
+        # responses_finished: 已经收到, 并记账的响应数.
+        # 当两者相等, 说明所有已经开始的请求都有了对应响应.
+        # 如果又调用了record_finished, 那么就没有可匹配的请求(响应数>请求数).
+        # 账本可能损坏, 或者发生重复记账.
+        # 这里使用>=, 是因为方法随后会递增responses_finished,
+        # 如果两者相等, 那么接下来responses_finished马上加一, 会导致请求数超过响应数
         self.state.responses_finished += 1
         usage = result.metadata.usage
         self.state.input_tokens += usage.input_tokens or 0
@@ -202,9 +213,11 @@ class FormalEpisodeRecord(BaseModel):
     record_index: StrictInt = Field(ge=0)
     case_id: str = Field(min_length=1)
     repeat_index: StrictInt = Field(ge=0)
-    previous_hash: str
+    previous_hash: str                          # 保存上条记录的 hash
     episode: AgentEpisode
-    record_hash: str = Field(min_length=64, max_length=64)
+    record_hash: str = Field(min_length=64, max_length=64)  # 当前记录的 hash
+    # 检测中间记录被修改, 记录顺序被修改, 记录被删除或者插入, record_index不连续, hash与内容不匹配.
+    # 但是 hash chain 本身可以被重新计算. 因此不保真.
 
 
 class FormalRunReport(BaseModel):
@@ -279,11 +292,11 @@ class ResumableFormalRunner:
             raise ValueError("Formal case_id 必须唯一")
         suites = {case.suite for case in cases}
         allowed_suites = (
-            {"behavior", "paraphrase"}
+            {"behavior", "paraphrase"}  # paraphrase: 释义
             if config.suite == "real_behavior"
             else {"reliability"}
         )
-        if not suites or not suites <= allowed_suites:
+        if not suites or not suites <= allowed_suites: # suites <= allowed_suites == True 表示 suites 是 allowed_suites 的子集, 也就是说, 所有 case 的 suite 都在允许范围内.
             raise ValueError("Formal case suite 与配置不一致")
         self.config = config
         self.cases = cases
@@ -295,10 +308,10 @@ class ResumableFormalRunner:
         self.stop_check = stop_check
         dataset_hash = _fingerprint([case.model_dump(mode="json") for case in cases])
         config_hash = _fingerprint(config.model_dump(mode="json"))
-        if resume:
+        if resume:                                                      # 恢复实验
             if not self.manifest_path.exists():
                 raise FileNotFoundError("恢复目录缺少 manifest.json")
-            self.manifest = FormalManifest.model_validate_json(
+            self.manifest = FormalManifest.model_validate_json(         # 校验已有 Manifest
                 self.manifest_path.read_text(encoding="utf-8")
             )
             if self.manifest.config != config:
@@ -315,9 +328,9 @@ class ResumableFormalRunner:
                 raise ValueError("恢复 case 顺序不一致")
             if self.manifest.expected_episode_count != len(cases) * config.repeats:
                 raise ValueError("恢复期望 Episode 数与矩阵不一致")
-        else:
-            run_dir.mkdir(parents=True, exist_ok=False)
-            self.manifest = FormalManifest(
+        else:                                                      # 新建实验
+            run_dir.mkdir(parents=True, exist_ok=False)            # 创建目录
+            self.manifest = FormalManifest(                        # 创建 Manifest
                 experiment_id=uuid4().hex,
                 config=config,
                 config_fingerprint=config_hash,
@@ -328,7 +341,7 @@ class ResumableFormalRunner:
             _atomic_json(self.manifest_path, self.manifest)
         if resume and not (run_dir / "request-ledger.json").exists():
             raise FileNotFoundError("恢复目录缺少 request-ledger.json")
-        self.ledger = PersistentRequestLedger(run_dir / "request-ledger.json")
+        self.ledger = PersistentRequestLedger(run_dir / "request-ledger.json")  # 创建请求账本
 
     def attach_execution(
         self,
@@ -342,7 +355,21 @@ class ResumableFormalRunner:
         self.stop_check = stop_check
 
     def _load_records(self) -> list[FormalEpisodeRecord]:
-        """校验 JSONL、hash 链、矩阵坐标与 run_id 唯一性。"""
+        """从 Episode JSONL 恢复历史记录, 并逐条校验其可信度。
+
+        仅在崩溃恢复 / 断点续跑时调用。逐行读取并校验:
+        - JSONL 无空行, 且可反序列化为 FormalEpisodeRecord;
+        - record_index 连续、previous_hash 与 record_hash 构成完整 hash 链;
+        - (case_id, repeat_index) 落在 (case x repeat) 矩阵内且不重复;
+        - Episode 内外层 case_id / repeat_index / suite 与 case 契约一致;
+        - episode.run_id 全局唯一。
+
+        Returns:
+            按写入顺序排列的合法记录; 文件不存在时返回空列表。
+
+        Raises:
+            ValueError: 任一校验项不通过, 说明历史记录已被篡改或损坏。
+        """
 
         if not self.episodes_path.exists():
             return []
@@ -350,7 +377,7 @@ class ResumableFormalRunner:
         previous_hash = ""
         coordinates: set[tuple[str, int]] = set()
         run_ids: set[str] = set()
-        allowed = {
+        allowed = {                                     # 列举出(case x repeat)矩阵
             (case.case_id, repeat)
             for repeat in range(self.config.repeats)
             for case in self.cases
@@ -365,11 +392,11 @@ class ResumableFormalRunner:
             payload = record.model_dump(mode="json", exclude={"record_hash"})
             expected_hash = _fingerprint(payload)
             coordinate = (record.case_id, record.repeat_index)
-            if record.record_index != index or record.previous_hash != previous_hash:
+            if record.record_index != index or record.previous_hash != previous_hash:   # 上个循环结束时, 设置了 previous_hash 为列表最后一个 record 的 hash, 新循环开始后, previous_hash 为列表倒数第二个record的hash
                 raise ValueError("Episode hash 链或顺序损坏")
             if record.record_hash != expected_hash:
                 raise ValueError("Episode 记录 hash 不一致")
-            if coordinate not in allowed or coordinate in coordinates:
+            if coordinate not in allowed or coordinate in coordinates:     # (case_id, repeat_index) 是否重复
                 raise ValueError("Episode 矩阵坐标非法或重复")
             if record.episode.case_id != record.case_id:
                 raise ValueError("Episode 内外 case_id 不一致")
@@ -378,17 +405,17 @@ class ResumableFormalRunner:
             if record.episode.suite != cases_by_id[record.case_id].suite:
                 raise ValueError("Episode suite 与 case 契约不一致")
             if record.episode.run_id in run_ids:
-                raise ValueError("Episode run_id 重复")
+                raise ValueError("Episode run_id 重复")                     # run_id唯一
             records.append(record)
             coordinates.add(coordinate)
             run_ids.add(record.episode.run_id)
-            previous_hash = record.record_hash
+            previous_hash = record.record_hash  # 每个record会存放前一个record的哈希值
         return records
 
     def _append(
         self, episode: AgentEpisode, records: list[FormalEpisodeRecord]
     ) -> None:
-        """构造下一条 hash 记录并追加、flush、fsync。"""
+        """保证不因为崩溃就丢掉已经完成的结果. 构造下一条 hash 记录并追加, 然后执行flush、fsync。"""
 
         payload = {
             "record_index": len(records),
@@ -401,10 +428,11 @@ class ResumableFormalRunner:
             **payload,
             record_hash=_fingerprint(payload),
         )
+        # episode 追加后立刻 flush + fsync, 避免内存中 "已完成" 的状态因为进程崩溃丢失, 恢复的时候出现重复执行.
         with self.episodes_path.open("a", encoding="utf-8", newline="\n") as handle:
             handle.write(record.model_dump_json() + "\n")
-            handle.flush()
-            os.fsync(handle.fileno())
+            handle.flush()              # 缓冲区推给os
+            os.fsync(handle.fileno())   # 要求os尽快落盘
         records.append(record)
 
     @staticmethod
@@ -424,18 +452,18 @@ class ResumableFormalRunner:
         stop_reason: str | None,
         persist: bool = True,
     ) -> FormalRunReport:
-        """完整矩阵才聚合；可在纯离线审计时只返回而不改写产物。"""
+        """决定什么时候允许生成完整报告. 完整矩阵才聚合；可在纯离线审计时只返回而不改写产物。"""
 
         episodes = [record.episode for record in records]
         complete = len(records) == self.manifest.expected_episode_count
-        aggregate = aggregate_scores(self.cases, episodes) if complete else None
+        aggregate = aggregate_scores(self.cases, episodes) if complete else None    # 只有完整矩阵才允许评分, 聚合, 求Bad Case
         model_request_count = self._expected_request_count(records)
         offline_provider = self.config.provider in {
             "mock",
             "scripted",
             "scripted_preflight",
         }
-        expected_request_count = 0 if offline_provider else model_request_count
+        expected_request_count = 0 if offline_provider else model_request_count # 如果使用的是scripted/mock这样的offline_provider, 设定请求账本数目固定位0. 如果是真实Provider, 请求数必须和模型回合还有重试次数保持一致
         bad_ids: list[str] = []
         scores = {}
         if complete:
@@ -501,7 +529,43 @@ class ResumableFormalRunner:
         # 跳过已完成坐标；每条 Episode 立即 append+fsync 并写部分报告；预算或
         # stop_check 命中后有界停止；异常中断也保存 incomplete 报告。只有固定
         # 矩阵完整时才允许 Aggregate，且重启不得重复消费坐标或请求预算。
-        raise NotImplementedError("TODO 15d：实现可恢复 Formal 实验循环")
+        episode_rec_list :list[FormalEpisodeRecord] = self._load_records()
+        completed_coordinates: set[tuple[str, int]] = set()
+        for episode_rec in episode_rec_list:
+            completed_coordinates.add((episode_rec.case_id, episode_rec.repeat_index))
+        run_cnt = 0
+        try:
+            for repeat_index in range(self.config.repeats):
+                for case in self.cases:
+                    if (case.case_id, repeat_index) in completed_coordinates:
+                        continue
+                    else:
+                        if max_new_episodes is None or run_cnt < max_new_episodes:  # 没有设置上限, 或者本次新跑数量没到上限
+                            stop_reason = (
+                                self.stop_check()
+                                if self.stop_check is not None
+                                else None
+                            )
+                            if stop_reason is not None:
+                                return self._report(episode_rec_list, stop_reason=stop_reason)
+                            else:
+                                episode = self.runner.run(case, repeat_index=repeat_index)
+                        else:
+                            return self._report(episode_rec_list, stop_reason="preflight_pause")
+
+                        self._append(episode, episode_rec_list)
+                        run_cnt += 1
+                        self._report(episode_rec_list, stop_reason=None)
+                        completed_coordinates.add((case.case_id, repeat_index))
+            return self._report(episode_rec_list, stop_reason=None)
+        except Exception:
+            self._report(episode_rec_list, stop_reason="interrupted")
+            raise
+
+        
+
+                    
+
 
 
 def _preserve_before_rescore(path: Path) -> None:
