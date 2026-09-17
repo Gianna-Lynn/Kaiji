@@ -90,6 +90,45 @@ def _episode(
     )
 
 
+def _failed_tool_episode(case: AgentEvalCase) -> AgentEpisode:
+    """运行一次确定性工具失败，构造没有最终回答的合法 Episode。"""
+
+    registry = ToolRegistry()
+
+    def fail(_args: SearchArgs) -> dict:
+        raise ToolExecutionError("受控永久失败", retryable=False)
+
+    registry.register(
+        ToolDefinition(
+            name="search_azusa",
+            description="受控失败的搜索工具",
+            arguments_model=SearchArgs,
+            result_model=SearchResult,
+            handler=fail,
+        )
+    )
+    action = ModelAction(
+        kind="tool_call",
+        tool_call=ToolCall(
+            call_id="failed-search",
+            name="search_azusa",
+            arguments={"query": "Kaiji"},
+        ),
+    )
+    result = AgentRuntime(
+        ScriptedDecisionProvider([action]),
+        ToolExecutor(registry),
+    ).run(case.prompt)
+    return AgentEpisode(
+        run_id="score-failed-tool",
+        case_id=case.case_id,
+        suite=case.suite,
+        repeat_index=0,
+        latency_ms=1.0,
+        result=result,
+    )
+
+
 def test_todo_14b_scorer_derives_success_from_result_not_runner_claim() -> None:
     episode = _episode("Kaiji 使用工具。\nCitations: kaiji-001")
 
@@ -166,6 +205,42 @@ def test_todo_14b_required_answer_fact_allows_cjk_and_mixed_script_boundaries() 
     score = score_episode(_case(), _episode("Kaiji使用工具。"))
 
     assert score.answer_facts_correct is True
+
+
+def test_tool_failure_without_required_facts_does_not_require_final_answer() -> None:
+    case = _case().model_copy(
+        update={
+            "expected_stop_reason": StopReason.TOOL_FAILED,
+            "required_answer_facts": [],
+            "allowed_citation_ids": [],
+        }
+    )
+    episode = _failed_tool_episode(case)
+
+    score = score_episode(case, episode)
+
+    assert episode.result.answer is None
+    assert episode.result.stop_reason == StopReason.TOOL_FAILED
+    assert score.answer_facts_correct is True
+    assert score.task_success is True
+
+
+def test_tool_failure_with_required_facts_still_fails_answer_fact_check() -> None:
+    case = _case().model_copy(
+        update={
+            "expected_stop_reason": StopReason.TOOL_FAILED,
+            "required_answer_facts": ["必须回答的事实"],
+            "allowed_citation_ids": [],
+        }
+    )
+    episode = _failed_tool_episode(case)
+
+    score = score_episode(case, episode)
+
+    assert episode.result.answer is None
+    assert score.answer_facts_correct is False
+    assert score.task_success is False
+    assert "answer_facts" in score.failure_categories
 
 
 def test_todo_14b_retry_recovery_counts_executor_retry_but_not_provider_retry() -> None:

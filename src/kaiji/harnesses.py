@@ -33,7 +33,7 @@ class HarnessVariant(StrEnum):
     def duplicate_guard(self) -> bool:
         """仅 full 与 no_retry 启用重复调用保护。"""
         # TODO 15a（L3）：所有变体仍保留 max_steps；这里只切换重复保护。
-        return self in{
-            HarnessVariant.BOUNDED_BASELINE,
+        return self in {
             HarnessVariant.NO_RETRY,
+            HarnessVariant.FULL_KAIJI,
         }

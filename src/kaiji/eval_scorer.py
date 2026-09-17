@@ -233,8 +233,13 @@ def _score_episode_with_citations(
             and _contains_subset(call.arguments, case.expected_arguments)
         )
 
-    if not episode.result.answer:
-        answer_facts_correct = False
+    if episode.result.answer is None:
+        # 未完成停止且没有目标事实时，不要求 Agent 伪造最终回答；
+        # 但预期完成的 Case 仍必须产出有效答案。
+        answer_facts_correct = (
+            not case.required_answer_facts
+            and case.expected_stop_reason != StopReason.COMPLETED
+        )
     else:
         answer_facts_correct = all(
             _contains_answer_fact(episode.result.answer, fact)

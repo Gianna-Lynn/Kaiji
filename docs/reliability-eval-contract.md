@@ -44,6 +44,9 @@ NFKC 规范化、大小写折叠与连续空白折叠，再要求事实作为连
 `90` 不匹配 `190`）；CJK 字符不参与该西文标识边界。该字段不做自然语言蕴含、
 否定识别、同义词、翻译或数值等价判断，题目应
 提供可由字面量检查的短事实。空白事实、重复事实在 `AgentEvalCase` 构造时拒绝。
+当 Case 预期以非 `completed` 原因停止且没有必需回答事实时，`answer=None` 不单独构成事实失败；
+若要求了事实而运行没有回答，则事实检查失败。预期 `completed` 的运行必须按 `RunResult`
+不变量提供非空回答。
 
 TODO14 的 `retry_recovered` 只统计原生 `AgentRuntime` 中 `ToolExecutor` 在同一
 工具调用内的有界 retry，并要求最终运行成功。TODO11 LangGraph 的 query rewrite
