@@ -3,8 +3,8 @@
 Kaiji 是一个面向可靠工具调用的 Python 单 Agent Runtime 实验项目，围绕参数校验、有界重试、状态恢复、Trace 和评测组织执行流程。
 它通过 HTTP/Tool Adapter 调用 [Azusa](https://github.com/Gianna-Lynn/Azusa) 的检索与证据接口。
 
-**项目展示与运行指南：[`portfolio/kaiji-v0`](https://github.com/Gianna-Lynn/Kaiji/tree/portfolio/kaiji-v0)**
-——集中查看架构、Demo、评测与失败分析。当前默认分支 `main` 保留作者的课程进度；展示分支的能力与历史结果需按对应版本阅读。
+**先看项目展示：[`portfolio/kaiji-v0`](https://github.com/Gianna-Lynn/Kaiji/tree/portfolio/kaiji-v0)**，集中查看架构、Demo、评测与失败分析。
+本页的最小体验使用 `main`；展示分支的服务化演示与实验记录见其运行指南。
 
 ## 项目重点
 
@@ -27,9 +27,11 @@ Azusa 负责 HNSW 与 RAG；Kaiji 通过 `search_azusa(query, k, mode)` 和 `get
 
 ## 最小体验
 
-需要 Python 3.11+。在当前 `main` 的仓库根目录安装并执行：
+需要 Git 和 Python 3.11+。下面获取 `main` 并运行离线工具演示：
 
 ```powershell
+git clone --branch main https://github.com/Gianna-Lynn/Kaiji.git
+cd Kaiji
 python -m pip install -e '.[dev]'
 python -m kaiji.demo
 ```
@@ -38,7 +40,7 @@ python -m kaiji.demo
 `stop_reason` 为 `completed`，并保留工具调用与 Trace。无需 API Key、GPU 或运行中的 Azusa。
 它只展示原生 Runtime 小闭环，不代表真实模型的自主工具选择成绩。
 
-完整展示分支的安装、演示和真实调用边界见
+更多场景的安装、演示和真实调用条件见
 [Demo 指南](https://github.com/Gianna-Lynn/Kaiji/blob/portfolio/kaiji-v0/docs/portfolio/demo-guide.md)。
 该指南中的命令应在其对应分支运行。
 
@@ -47,18 +49,19 @@ python -m kaiji.demo
 - [展示分支架构与状态图](https://github.com/Gianna-Lynn/Kaiji/blob/portfolio/kaiji-v0/docs/portfolio/architecture.md)。
 - [评测与失败案例](https://github.com/Gianna-Lynn/Kaiji/blob/portfolio/kaiji-v0/docs/portfolio/evaluation-and-bad-cases.md)：区分协议测试、受控故障实验、真实模型行为和 Azusa Live。
 - [主张证据索引](https://github.com/Gianna-Lynn/Kaiji/blob/portfolio/kaiji-v0/docs/portfolio/evidence-index.md)：对应代码、测试与历史验证范围。
-- [当前课程契约](LEARNING.md)、[课程路线](docs/curriculum.md)、[Reliability Eval 任务](docs/reliability-course-l1-l3.md)。
 
 ## 分支与结论边界
 
 | 分支 | 用途 |
 |---|---|
-| `main` | 作者逐步完成课程 TODO 的学习进度；不以参考分支结果代替当前分支验收 |
+| `main` | 开发主线；各模块实现进度与验收记录见开发与学习文档 |
 | [`solution/kaiji-v0`](https://github.com/Gianna-Lynn/Kaiji/tree/solution/kaiji-v0) | 完整参考实现与历史审计基线 |
 | [`portfolio/kaiji-v0`](https://github.com/Gianna-Lynn/Kaiji/tree/portfolio/kaiji-v0) | 求职展示、证据组织及服务化演示 |
 
 历史测试与模型成绩仅适用于报告中的提交、数据和环境。`eval_demo` 使用合成金标观测演示聚合器，不能作为 Agent 成绩。
-课程完成情况以 `main` 的实现与验收为准；展示分支的服务化能力见对应文档。受控实验结果不作为生产 SLA 或开放域效果保证。
+受控实验结果不作为生产 SLA 或开放域效果保证。
 
 Kaiji（かいじ，甲斐路号）的名字来自 JR 东日本中央本线特急列车，与 Azusa（あずさ，梓号）呼应。
-首页整理前的课程背景与历史排期保留在[学习计划归档](docs/learning-plan-archive.md)。
+
+开发与学习记录：[当前任务与契约](LEARNING.md) · [课程路线](docs/curriculum.md) ·
+[Reliability Eval 任务](docs/reliability-course-l1-l3.md) · [历史学习计划](docs/learning-plan-archive.md)。
