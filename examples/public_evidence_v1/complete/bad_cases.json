@@ -1,0 +1,372 @@
+[
+  {
+    "episode": {
+      "run_id": "public-arguments-0-ed9bfae02d734f95b1307faaa08b5af9",
+      "case_id": "public-arguments",
+      "suite": "reliability",
+      "repeat_index": 0,
+      "latency_ms": 1.3796999992337078,
+      "result": {
+        "answer": "最终价格为 90。",
+        "stop_reason": "completed",
+        "steps": 2,
+        "messages": [
+          {
+            "role": "user",
+            "content": "原价 120，减免 25%，请计算最终价格。",
+            "tool_call": null,
+            "tool_result": null
+          },
+          {
+            "role": "assistant",
+            "content": "",
+            "tool_call": {
+              "call_id": "public-arguments-discount",
+              "name": "calculate_discount",
+              "arguments": {
+                "price": "120.0",
+                "percent": "25"
+              }
+            },
+            "tool_result": null
+          },
+          {
+            "role": "tool",
+            "content": "{\"call_id\":\"public-arguments-discount\",\"tool_name\":\"calculate_discount\",\"ok\":true,\"attempts\":1,\"output\":{\"final_price\":\"90.0\"},\"error\":null}",
+            "tool_call": null,
+            "tool_result": {
+              "call_id": "public-arguments-discount",
+              "tool_name": "calculate_discount",
+              "ok": true,
+              "attempts": 1,
+              "output": {
+                "final_price": "90.0"
+              },
+              "error": null
+            }
+          }
+        ],
+        "successful_tool_results": [
+          {
+            "call_id": "public-arguments-discount",
+            "tool_name": "calculate_discount",
+            "ok": true,
+            "attempts": 1,
+            "output": {
+              "final_price": "90.0"
+            },
+            "error": null
+          }
+        ],
+        "trace": [
+          {
+            "step": 1,
+            "event": "model_action",
+            "data": {
+              "action": {
+                "kind": "tool_call",
+                "tool_call": {
+                  "call_id": "public-arguments-discount",
+                  "name": "calculate_discount",
+                  "arguments": {
+                    "price": "120.0",
+                    "percent": "25"
+                  }
+                },
+                "final_answer": null,
+                "assistant_content": ""
+              },
+              "failure": null,
+              "metadata": {
+                "model": "scripted",
+                "latency_ms": 0.0,
+                "request_id": null,
+                "usage": {
+                  "input_tokens": null,
+                  "output_tokens": null,
+                  "total_tokens": null
+                }
+              },
+              "prior_attempt_failures": []
+            }
+          },
+          {
+            "step": 1,
+            "event": "tool_result",
+            "data": {
+              "call_id": "public-arguments-discount",
+              "tool_name": "calculate_discount",
+              "ok": true,
+              "attempts": 1,
+              "output": {
+                "final_price": "90.0"
+              },
+              "error": null
+            }
+          },
+          {
+            "step": 2,
+            "event": "model_action",
+            "data": {
+              "action": {
+                "kind": "final_answer",
+                "tool_call": null,
+                "final_answer": "最终价格为 90。",
+                "assistant_content": ""
+              },
+              "failure": null,
+              "metadata": {
+                "model": "scripted",
+                "latency_ms": 0.0,
+                "request_id": null,
+                "usage": {
+                  "input_tokens": null,
+                  "output_tokens": null,
+                  "total_tokens": null
+                }
+              },
+              "prior_attempt_failures": []
+            }
+          },
+          {
+            "step": 2,
+            "event": "stop",
+            "data": {
+              "reason": "completed"
+            }
+          }
+        ],
+        "model_calls": [
+          {
+            "action": {
+              "kind": "tool_call",
+              "tool_call": {
+                "call_id": "public-arguments-discount",
+                "name": "calculate_discount",
+                "arguments": {
+                  "price": "120.0",
+                  "percent": "25"
+                }
+              },
+              "final_answer": null,
+              "assistant_content": ""
+            },
+            "failure": null,
+            "metadata": {
+              "model": "scripted",
+              "latency_ms": 0.0,
+              "request_id": null,
+              "usage": {
+                "input_tokens": null,
+                "output_tokens": null,
+                "total_tokens": null
+              }
+            },
+            "prior_attempt_failures": []
+          },
+          {
+            "action": {
+              "kind": "final_answer",
+              "tool_call": null,
+              "final_answer": "最终价格为 90。",
+              "assistant_content": ""
+            },
+            "failure": null,
+            "metadata": {
+              "model": "scripted",
+              "latency_ms": 0.0,
+              "request_id": null,
+              "usage": {
+                "input_tokens": null,
+                "output_tokens": null,
+                "total_tokens": null
+              }
+            },
+            "prior_attempt_failures": []
+          }
+        ]
+      }
+    },
+    "score": {
+      "run_id": "public-arguments-0-ed9bfae02d734f95b1307faaa08b5af9",
+      "case_id": "public-arguments",
+      "task_success": false,
+      "stop_correct": true,
+      "tool_selection_correct": true,
+      "arguments_correct": false,
+      "answer_facts_correct": true,
+      "citation_precision": null,
+      "citation_recall": null,
+      "citation_supported": true,
+      "retry_recovered": true,
+      "steps": 2,
+      "input_tokens": 0,
+      "output_tokens": 0,
+      "total_tokens": 0,
+      "latency_ms": 1.3796999992337078,
+      "failure_categories": [
+        "arguments"
+      ]
+    }
+  },
+  {
+    "episode": {
+      "run_id": "public-timeout-0-5ac2db595dbf4416add90950fee1278d",
+      "case_id": "public-timeout",
+      "suite": "reliability",
+      "repeat_index": 0,
+      "latency_ms": 23.264599993126467,
+      "result": {
+        "answer": null,
+        "stop_reason": "tool_failed",
+        "steps": 1,
+        "messages": [
+          {
+            "role": "user",
+            "content": "原价 120，减免 25%，请计算最终价格。",
+            "tool_call": null,
+            "tool_result": null
+          },
+          {
+            "role": "assistant",
+            "content": "",
+            "tool_call": {
+              "call_id": "public-timeout-discount",
+              "name": "calculate_discount",
+              "arguments": {
+                "price": "120",
+                "percent": "25"
+              }
+            },
+            "tool_result": null
+          },
+          {
+            "role": "tool",
+            "content": "{\"call_id\":\"public-timeout-discount\",\"tool_name\":\"calculate_discount\",\"ok\":false,\"attempts\":2,\"output\":null,\"error\":{\"code\":\"timeout\",\"message\":\"tool exceeded 0.001s timeout\",\"retryable\":true}}",
+            "tool_call": null,
+            "tool_result": {
+              "call_id": "public-timeout-discount",
+              "tool_name": "calculate_discount",
+              "ok": false,
+              "attempts": 2,
+              "output": null,
+              "error": {
+                "code": "timeout",
+                "message": "tool exceeded 0.001s timeout",
+                "retryable": true
+              }
+            }
+          }
+        ],
+        "successful_tool_results": [],
+        "trace": [
+          {
+            "step": 1,
+            "event": "model_action",
+            "data": {
+              "action": {
+                "kind": "tool_call",
+                "tool_call": {
+                  "call_id": "public-timeout-discount",
+                  "name": "calculate_discount",
+                  "arguments": {
+                    "price": "120",
+                    "percent": "25"
+                  }
+                },
+                "final_answer": null,
+                "assistant_content": ""
+              },
+              "failure": null,
+              "metadata": {
+                "model": "scripted",
+                "latency_ms": 0.0,
+                "request_id": null,
+                "usage": {
+                  "input_tokens": null,
+                  "output_tokens": null,
+                  "total_tokens": null
+                }
+              },
+              "prior_attempt_failures": []
+            }
+          },
+          {
+            "step": 1,
+            "event": "tool_result",
+            "data": {
+              "call_id": "public-timeout-discount",
+              "tool_name": "calculate_discount",
+              "ok": false,
+              "attempts": 2,
+              "output": null,
+              "error": {
+                "code": "timeout",
+                "message": "tool exceeded 0.001s timeout",
+                "retryable": true
+              }
+            }
+          },
+          {
+            "step": 1,
+            "event": "stop",
+            "data": {
+              "reason": "tool_failed"
+            }
+          }
+        ],
+        "model_calls": [
+          {
+            "action": {
+              "kind": "tool_call",
+              "tool_call": {
+                "call_id": "public-timeout-discount",
+                "name": "calculate_discount",
+                "arguments": {
+                  "price": "120",
+                  "percent": "25"
+                }
+              },
+              "final_answer": null,
+              "assistant_content": ""
+            },
+            "failure": null,
+            "metadata": {
+              "model": "scripted",
+              "latency_ms": 0.0,
+              "request_id": null,
+              "usage": {
+                "input_tokens": null,
+                "output_tokens": null,
+                "total_tokens": null
+              }
+            },
+            "prior_attempt_failures": []
+          }
+        ]
+      }
+    },
+    "score": {
+      "run_id": "public-timeout-0-5ac2db595dbf4416add90950fee1278d",
+      "case_id": "public-timeout",
+      "task_success": false,
+      "stop_correct": false,
+      "tool_selection_correct": true,
+      "arguments_correct": true,
+      "answer_facts_correct": false,
+      "citation_precision": null,
+      "citation_recall": null,
+      "citation_supported": true,
+      "retry_recovered": true,
+      "steps": 1,
+      "input_tokens": 0,
+      "output_tokens": 0,
+      "total_tokens": 0,
+      "latency_ms": 23.264599993126467,
+      "failure_categories": [
+        "stop",
+        "answer_facts"
+      ]
+    }
+  }
+]

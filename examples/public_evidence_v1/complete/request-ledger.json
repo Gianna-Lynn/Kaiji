@@ -1,0 +1,8 @@
+{
+  "schema_version": 1,
+  "requests_started": 0,
+  "responses_finished": 0,
+  "input_tokens": 0,
+  "output_tokens": 0,
+  "consecutive_abnormal": 0
+}

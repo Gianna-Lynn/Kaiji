@@ -1,0 +1,52 @@
+{
+  "experiment_id": "716cf6f52519490683afdb510c2c23e0",
+  "complete": true,
+  "stop_reason": null,
+  "expected_episode_count": 3,
+  "actual_episode_count": 3,
+  "requests_started": 0,
+  "responses_finished": 0,
+  "model_request_count": 5,
+  "expected_request_count": 0,
+  "estimated_cost_usd": 0.0,
+  "dataset_hash": "cc1ab3d9e6128b5b905f8687c50d6da8ea991862d48eda2f1285377a2d1e0344",
+  "config_fingerprint": "77dae39ad45c0fed64aff6d821f30ea96f3a57b33a0864684b8b189a4c3424ae",
+  "latest_record_hash": "78f07255eccf95436a7754bec86cdc50803c21f8497f2a6be832c3ef51f6fe78",
+  "retried_request_count": 0,
+  "retry_failure_distribution": {},
+  "aggregate": {
+    "episode_count": 3,
+    "task_success_rate": 0.3333333333333333,
+    "tool_selection_accuracy": 1.0,
+    "argument_accuracy": 0.6666666666666666,
+    "no_tool_accuracy": 0.0,
+    "retry_recovery_rate": 0.0,
+    "citation_precision": null,
+    "citation_recall": null,
+    "average_steps": 1.6666666666666667,
+    "total_input_tokens": 0,
+    "total_output_tokens": 0,
+    "total_tokens": 0,
+    "average_latency_ms": 9.273399996648854,
+    "p50_latency_ms": 3.1758999975863844,
+    "p95_latency_ms": 23.264599993126467,
+    "stop_reason_distribution": {
+      "completed": 2,
+      "tool_failed": 1
+    },
+    "failure_distribution": {
+      "arguments": 1,
+      "stop": 1,
+      "answer_facts": 1
+    }
+  },
+  "bad_case_run_ids": [
+    "public-arguments-0-ed9bfae02d734f95b1307faaa08b5af9",
+    "public-timeout-0-5ac2db595dbf4416add90950fee1278d"
+  ],
+  "scenario_distribution": {
+    "success": 1,
+    "arguments": 1,
+    "timeout": 1
+  }
+}

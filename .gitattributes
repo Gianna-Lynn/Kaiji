@@ -1,0 +1,2 @@
+# 冻结证据的原始字节需跨平台一致，避免 checkout 换行转换破坏包摘要。
+examples/public_evidence_v1/** text eol=lf
