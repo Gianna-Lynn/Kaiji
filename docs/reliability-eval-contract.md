@@ -131,6 +131,8 @@ Harness 都保留相同工具 Schema、参数/结果校验、Provider、System P
 这条协议。首轮最多发送 20 个请求，只传受控提示、工具 Schema 与公开 fixture。
 
 真实 Azusa Pilot 使用答案分支网关的 3 条公开 fixture 与 `bm25` 模式。它验证
-DeepSeek 选择工具、Kaiji 经 HTTP Adapter 调用网关、工具结果回填、引用归属和
+有引导的协议执行（提示直接给出预期工具、查询参数与引用）、Kaiji 经 HTTP Adapter 调用网关、工具结果回填、引用归属和
 Trace，不宣称 Hybrid、Dense 或大规模检索成绩。默认 Dense/Hybrid 后端首次加载
 Embedding 模型超过了 Kaiji Adapter 的 3 秒默认超时，因此不纳入这组微型 Smoke。
+这五条模型 Live 不衡量自主工具选择；真实 Behavior Formal 使用统一提示和受控 Mock
+工具，是另一组实验，二者不得合并计分。当前交付版本与复验范围见 `docs/delivery-baseline.md`。

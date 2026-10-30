@@ -1,4 +1,4 @@
-"""运行 DeepSeek、Kaiji Runtime 与真实 Azusa HTTP 网关的 Live Pilot。"""
+"""运行有引导的 Azusa HTTP 集成 Pilot；提示给出金标，不衡量自主工具选择。"""
 
 from __future__ import annotations
 
@@ -25,7 +25,10 @@ from kaiji.tools import ToolExecutor
 
 
 def _system_prompt(case: AgentEvalCase) -> str:
-    """生成只含公开 fixture 契约的 case 专用指令。"""
+    """把金标工具、查询参数和引用直接写入指令，只用于有引导的协议验证。
+
+    保留历史提示以便比较同一集成路径；通过结果不能作为模型自主选择的成绩。
+    """
 
     citation = case.allowed_citation_ids[0]
     query = case.expected_arguments["query"]
@@ -46,7 +49,7 @@ def run_live_pilot(
     api_key_env: str,
     case_id: str | None = None,
 ) -> tuple[object, RequestBudget]:
-    """运行完整 Pilot 或指定单条 case，并共享真实请求硬预算。"""
+    """运行五条或指定单条有引导 case，返回报告与共享预算；缺凭据或 case 非法即失败。"""
 
     if not os.environ.get(api_key_env):
         raise RuntimeError("指定的 API Key 环境变量未设置")
