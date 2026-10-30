@@ -7,6 +7,7 @@ Kaiji 是一个以可靠性为主线的 Python Agent 工程项目。它从零实
 
 本次交付核心基底固定为 `54bdd1d83d0e678f7b55751555ea633819d9d5c8`；
 当前离线复验、阶段补丁和历史结果归属见[交付基线](docs/delivery-baseline.md)。
+P1 的规则问答 HTTP 演示与无需密钥的精简复核包见[P1 验证记录](docs/p1-validation.md)。
 
 这个项目研究的不是“怎样再做一个聊天机器人”，而是：
 

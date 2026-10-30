@@ -1,0 +1,24 @@
+{
+  "experiment_id": "716cf6f52519490683afdb510c2c23e0",
+  "complete": false,
+  "stop_reason": "intentional_pause",
+  "expected_episode_count": 3,
+  "actual_episode_count": 1,
+  "requests_started": 0,
+  "responses_finished": 0,
+  "model_request_count": 2,
+  "expected_request_count": 0,
+  "estimated_cost_usd": 0.0,
+  "dataset_hash": "cc1ab3d9e6128b5b905f8687c50d6da8ea991862d48eda2f1285377a2d1e0344",
+  "config_fingerprint": "77dae39ad45c0fed64aff6d821f30ea96f3a57b33a0864684b8b189a4c3424ae",
+  "latest_record_hash": "b3b9492b4c9715d7741d3675dd07316e7db8941b8ed4ba10421f217ec8ea086a",
+  "retried_request_count": 0,
+  "retry_failure_distribution": {},
+  "aggregate": null,
+  "bad_case_run_ids": [],
+  "scenario_distribution": {
+    "success": 1,
+    "arguments": 1,
+    "timeout": 1
+  }
+}
