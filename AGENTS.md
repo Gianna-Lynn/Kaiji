@@ -64,7 +64,7 @@ Kaiji 的核心对象是 Message、Tool、AgentState、Workflow、Checkpoint、T
 - TODO6 已完成上一轮结构修复和分支同步；本轮独立静态复审发现的严格审批路由、窄测试覆盖、Checkpoint 自定义枚举序列化、`max_steps` 运行时类型校验和暂停线程复用测试缺口均已修复。TODO8—TODO12 仍未按新版独立审计方法重新审计，继续保留下面的未审计声明。
 - TODO7 已完成本轮独立审计和分支同步；TODO8—TODO12 仍未按新版独立审计方法重新审计，不得据此宣称其完整。
 - TODO8—TODO12 在当前 main 已有实现，但尚未按新版独立审计方法重新审计；TODO11d/11e 已拆成 `_align_observations()` 与 `_aggregate_aligned()` 两个独立边界，必须分别验收。
-- TODO7、TODO13 与 TODO14 已进入当前 main 的提交历史；TODO15 仍在进行中，当前仍存在 TODO15c/15d 的明确未实现入口，15a/15b 还必须继续按当前契约和测试核对。真实模型与 Azusa Live 不属于默认离线回归。
+- TODO7、TODO13 与 TODO14 已进入当前 main 的提交历史；TODO15c/15d 在当前 HEAD 已有实现，旧“未实现”描述不再代表代码状态。2026-10-30 离线回归及交付范围见 `docs/delivery-baseline.md`；测试通过不替代课程独立审计。真实模型与 Azusa Live 不属于默认离线回归。
 - 当前工作树核对快照（2026-09-13，`HEAD=2c50022`）：606 collected、19 failed、1 skipped；586 passed 是由总数扣除推算，未直接读到 pytest 最终汇总行。该数字受当日 Windows ACL 清理和未提交工作区改动的时点影响，不能替代重新验收。
 
 ## Reliability 课程分级

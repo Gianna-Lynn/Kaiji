@@ -5,6 +5,8 @@ Kaiji 是一个面向可靠工具调用的 Python 单 Agent Runtime 实验项目
 
 **先看项目展示：[`portfolio/kaiji-v0`](https://github.com/Gianna-Lynn/Kaiji/tree/portfolio/kaiji-v0)**，集中查看架构、Demo、评测与失败分析。
 本页的最小体验使用 `main`；展示分支的服务化演示与实验记录见其运行指南。
+交付核心基底固定为展示提交 `54bdd1d83d0e678f7b55751555ea633819d9d5c8`；
+当前离线复验、P0-C 阶段补丁及三类恢复边界见[交付基线](docs/delivery-baseline.md)。
 
 ## 项目重点
 

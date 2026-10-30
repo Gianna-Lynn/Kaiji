@@ -5,7 +5,7 @@
 
 ## 1. Kaiji 到底是什么
 
-Kaiji 是位于 Azusa 上层的单 AgenCLA 应用工程。
+Kaiji 是位于 Azusa 上层的单 Agent 应用工程。
 
 ```text
 用户问题
@@ -44,7 +44,7 @@ get_chunk_by_id(chunk_id)
 
 人需要完成：
 
-- `main` 中标记为 `TODO 1`—`TODO 15` 的关键逻辑；
+- 按 `TODO 1`—`TODO 15` 路线理解、实现与解释关键逻辑；当前 main 已有多项实现，编号不代表仍是空骨架；
 - 每完成一课，运行对应窄测试；
 - 在看答案前，先解释自己的设计和失败边界；
 - 最后完成 Kaiji 与 Azusa 的真实跨仓库验收。
@@ -59,6 +59,7 @@ Kaiji：
 |---|---|
 | `main` | 人实际写 TODO 的练习分支 |
 | `solution/kaiji-v0` | TODO 1—15 的完整答案、真实 Azusa 集成与 Reliability Eval 基线 |
+| `portfolio/kaiji-v0` | 展示交付基底；固定提交、复验与未交付能力见 `docs/delivery-baseline.md` |
 
 Azusa：
 
@@ -100,15 +101,15 @@ python -m pytest tests/test_scaffold.py
 python -m kaiji.demo
 ```
 
-练习初始状态应当是：
+以下是历史初始脚手架状态，不是当前 main 的预期输出：
 
 - `tests/test_scaffold.py`：3 个测试通过；
 - `kaiji.demo`：可运行，但返回 `max_steps`、`steps=0`；
 - 全量测试：大量 TODO 测试失败；
 - live integration：未设置环境变量时跳过。
 
-这说明环境和契约正常，尚未完成的是人的实现。不要在第一课一开始就以“全量 pytest
-必须全绿”为目标；先让当前课的窄测试转绿。
+当前 main 的 Demo 已返回折扣结果与 `completed`；当前回归与分支差异见
+`docs/delivery-baseline.md`。历史初始红灯不能代替当前验收；学习仍应围绕当前课的窄测试和解释能力。
 
 ## 5. 推荐学习路线
 
