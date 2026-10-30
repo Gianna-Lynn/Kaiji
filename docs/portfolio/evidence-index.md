@@ -3,6 +3,8 @@
 本索引用于约束 README、简历和面试表述。每条主张必须能落到实现、契约、测试或历史报告；
 只有代码存在但作者尚未亲手掌握的能力，不应写成个人已独立实现。
 
+固定交付提交、当前离线复验与历史证据的归属见[交付基线](../delivery-baseline.md)。
+
 | 可公开主张 | 实现 | 直接测试/契约 | 历史结果 |
 |---|---|---|---|
 | 类型化 Tool Calling | `models.py`、`tools.py` | `test_registry.py`、`test_executor.py` | 冻结测试记录 |
@@ -14,11 +16,11 @@
 | 失败证据隔离 | `RunResult.successful_tool_results` | 消息/Trace/证据一致性测试 | Citation 指标与 Bad Case |
 | LangGraph HITL | `build_agent_graph()`、`resume_graph()` | Interrupt、严格 bool、线程隔离测试 | SQLite Resume |
 | Checkpoint/Memory 分离 | `persistence.py` | 损坏、身份、原子写与隔离测试 | 冻结审计 |
-| Azusa 稳定 Adapter | `adapters/azusa.py`、`azusa_tools.py` | MockTransport 与 Live Integration | 3 Search + 3 Get、5 条模型 Live |
+| Azusa 稳定 Adapter | `adapters/azusa.py`、`azusa_tools.py` | MockTransport 与 Live Integration | 历史 3 Search + 3 Get；另有 5 条给定金标的模型 Guided Live |
 | OpenAI-compatible Provider | `providers/openai_compatible.py` | 请求、历史配对、响应、错误分类测试 | DeepSeek Smoke/Formal |
 | Behavior/Fault Suite 分离 | `eval/*.jsonl`、`experiment.py` | Runner/Scorer/Experiment 测试 | Pilot 方法学修正 |
 | 确定性 Scorer | `eval_scorer.py` | 适用分母、引用与字面事实测试 | Formal 离线重算 |
-| 可恢复 Formal | `formal_runner.py` | Manifest、账本、hash、resume 对抗测试 | 120/120 完整 Formal |
+| 可恢复 Formal | `formal_runner.py` | Manifest、账本、hash、resume 对抗测试 | 历史矩阵完成 120/120；严格任务成功 116/120 |
 | Token/费用边界 | `ModelUsage`、`PersistentRequestLedger` | 请求预算与账本不变量测试 | 225 请求、历史费用估算 |
 | HTTP 服务与 fail-closed 鉴权 | `service.py` | `test_service.py` 直接契约 | Uvicorn live 200；缺配置 503 |
 | 服务端工具权限收缩 | `ServiceSettings.allowed_tools`、每请求 Registry | allow/deny 与新 Runtime 测试 | P2 窄测试 10/10 |

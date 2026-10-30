@@ -52,6 +52,7 @@ flowchart TB
     AR --> TRACE
     TRACE --> SPAN[Redacted span projection]
     RR --> EP
+    LG[LangGraph workflow] --> AS
     AS --> CP
     AS -. explicit selection only .-> MEM
 ```
@@ -156,6 +157,11 @@ stateDiagram-v2
 副作用路径只模拟批准/拒绝，不执行真实外部写操作。
 
 ## State、记录与持久化边界
+
+Native Runtime 每次 `run(question)` 从新消息与去重集合开始，不自动保存或恢复任意模型回合。
+图中的 Checkpoint 属于显式快照或 LangGraph 工作流；Formal 的续跑单位是 case/repeat
+坐标，与 SQLite 工作流恢复分开验证。固定交付提交与本轮复验见
+[交付基线](../delivery-baseline.md)。
 
 | 对象 | 回答的问题 | 生命周期 | 禁止混用 |
 |---|---|---|---|

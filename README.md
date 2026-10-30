@@ -5,6 +5,9 @@ Kaiji 是一个以可靠性为主线的 Python Agent 工程项目。它从零实
 改变表达方式但不替代业务边界。Kaiji 通过 HTTP/Tool Adapter 调用独立的 Azusa RAG，
 不复制其 HNSW、Hybrid、Rerank 或 Citation 实现。
 
+本次交付核心基底固定为 `54bdd1d83d0e678f7b55751555ea633819d9d5c8`；
+当前离线复验、阶段补丁和历史结果归属见[交付基线](docs/delivery-baseline.md)。
+
 这个项目研究的不是“怎样再做一个聊天机器人”，而是：
 
 > 怎样让一个使用真实 LLM、工具和 RAG 的单 Agent，其行为可以被限制、恢复、观测、
@@ -43,14 +46,16 @@ flowchart LR
     V --> A[Azusa / local tools]
     A -->|validated ToolResult| R
     R --> T[Trace + model metadata]
-    R --> C[Checkpoint / resume]
+    U --> G[LangGraph workflow]
+    G --> C[SQLite interrupt / resume]
     T --> S[Runner + deterministic Scorer]
-    C --> F[Formal experiment]
-    S --> F
+    F[Formal case x repeat runner] --> R
+    F --> S
 ```
 
 更完整的组件图、运行时序、LangGraph 状态机与 Formal 数据流见
 [架构与状态图](docs/portfolio/architecture.md)。
+Native Runtime 不自动接入 Checkpoint；SQLite 恢复工作流，Formal 恢复实验矩阵。
 
 ## 为什么不用一个框架直接包完
 

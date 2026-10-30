@@ -7,6 +7,9 @@
 [`reliability-eval-v0.2-report.md`](../reliability-eval-v0.2-report.md) 和
 [`freeze-audit-v0.2.md`](../freeze-audit-v0.2.md) 为准。
 
+本页数字继续保留历史归属；2026-10-30 的 P0-C 离线复验与固定交付提交见
+[交付基线](../delivery-baseline.md)，不把历史模型结果改写为本轮模型成绩。
+
 ## 四类证据不能混用
 
 | 证据 | 用途 | 不能证明 |
@@ -14,19 +17,19 @@
 | Contract Suite | 实现满足当前直接断言 | 真实模型质量 |
 | Scripted/Fault Suite | 机制在可控故障下的行为差异 | 对真实模型的普遍增益 |
 | Real Behavior Formal | 固定 Prompt/工具/数据下的模型行为 | 开放域、用户流量或生产 SLA |
-| Azusa Live | 小型 fixture 上的跨仓库 HTTP 闭环 | 大规模 Dense/Hybrid 检索效果 |
+| 有引导的 Azusa Live | 金标工具、参数、引用已给定的跨仓库 HTTP 闭环 | 自主工具选择或大规模 Dense/Hybrid 检索效果 |
 
 ## 历史结果摘要
 
 | 实验 | 结果 | 正确表述 |
 |---|---:|---|
-| 冻结测试记录 | 541 passed，1 live skipped | 当前答案与已覆盖契约一致；skip 不等于 Live 通过 |
+| 历史冻结测试记录 | 541 passed，1 live skipped | 当时答案与已覆盖契约一致；skip 不等于 Live 通过 |
 | Azusa BM25 Live | 3 次搜索 + 3 次按 ID 读取通过 | 三条公开 fixture 的语义接口一致 |
 | Scripted Smoke | 6/6 | Runner/Scorer 小闭环可运行 |
 | Reliability Formal | 60 Episode，`full_kaiji` 0.90 | 固定故障集上的机制结果 |
 | DeepSeek Behavior Pilot v2 | 19/20 严格通过 | 单次自主行为 Pilot，不证明重复稳定性 |
 | DeepSeek Real Behavior Formal | 116/120 严格通过 | 40 条行为 × 3 次的受控 Mock 工具实验 |
-| DeepSeek + Azusa Live | 5 条最终通过 | 真实模型、HTTP Adapter、证据回填与引用闭环 |
+| DeepSeek + Azusa Guided Live | 5 条最终通过 | 给定金标后的真实模型协议、HTTP Adapter、证据回填与引用闭环 |
 | SQLite Resume | 通过 | 新连接、线程隔离和严格审批值；不证明分布式一致性 |
 
 ## Formal 指标
@@ -86,9 +89,13 @@ Guided Pilot 按场景暴露工具子集，并在 System Prompt 中给出预期�
 旧聚合器把指标不适用的 Episode 当作满分，导致 Argument Accuracy 被普通题稀释。
 
 修正：Tool Selection/Argument Accuracy 只以要求工具的 Episode 为分母，No-tool、Retry
-Recovery 和 Citation 分别使用自己的适用集合；没有适用项报告 0.0，不伪造满分。
+Recovery 和 Citation 分别使用自己的适用集合；工具类指标没有适用项报告 0.0，
+Citation Precision/Recall 零分母则为 `null`，不伪造满分或把不适用引用记作零分。
 
 ### 4. Azusa 冷态超时
+
+这组 Live 的提示直接给出 `search_azusa`、query、k、mode 和允许引用，因此只属于有引导的
+集成验证。它与使用统一提示、受控 Mock 工具的真实 Behavior Formal 分开报告。
 
 第五条 Live Case 首次运行中，两次只读 handler 都超过 4 秒，Runtime 以 `tool_failed`
 停止，失败结果没有进入成功证据。预热后相同查询约 69 ms 并成功重跑。
