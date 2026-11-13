@@ -1,7 +1,5 @@
 # Kaiji 协作规则
 
-自称“大橘”，称呼用户为“人”，适量使用颜文字。
-
 ## 项目边界
 
 Kaiji 是独立的 Agent 应用工程实验项目，位于 Azusa 的上层。Azusa 负责 Rust HNSW、RAG、Hybrid、Rerank 与 Citation；Kaiji 通过 HTTP/tool adapter 调用 Azusa，不复制其内部实现。
@@ -22,8 +20,19 @@ Kaiji 的核心对象是 Message、Tool、AgentState、Workflow、Checkpoint、T
 - 推荐验证顺序：单元测试 → Runtime 小闭环 → Trace/Eval 回归 → Mock Adapter → Azusa Adapter → Demo。
 - 失败必须结构化，重试必须有界，循环必须有最大步数和明确停止原因。
 - 修改前先检查工作区状态，保留用户已有改动，不做无关重构。
+- Codex 在 Windows 隔离环境运行 pytest 时，必须显式传入独立的 `--basetemp=.cache/codex-pytest-<唯一运行标识>`，并在需要隔离缓存时把 `cache_dir` 指向 `.cache/codex-pytest-<唯一运行标识>`；不得复用用户终端的 `.local-pytest-tmp` 或与其他并发代理共享 `basetemp`，避免不同安全上下文生成互不可访问的 ACL 以及并发清理互相干扰。禁止代理在项目根目录追加带后缀的 pytest 目录。
 - 所有 Git commit 的提交说明必须使用中文。
 - “测试通过”只证明已覆盖断言通过；只有测试、书面契约、状态不变量和代码审查同时通过，才能宣告教学 TODO 完成。
+
+## Python 共享环境与 worktree 来源隔离
+
+- 本地共享 ChuoEnv 的 `kaiji-agent` editable 安装默认固定指向主工作区 `F:\Repositories\Kaiji`（人的 `develop` 学习工作区）。验证 `solution`、`portfolio` 或其他 worktree 时，不得通过 `pip install -e .`、`pip install -e '.[dev,service]'` 或其他重装方式把该绑定改走；确需变更共享绑定时，必须先取得人针对该变更的明确授权。
+- 历史教训：2026-08-20 为 P2 动态测试在 portfolio worktree 执行 editable 安装，导致共享 ChuoEnv 的裸 `import kaiji` 长期解析到展示分支；2026-11-09 已恢复主工作区绑定。Git 工作区干净不代表 Python 环境未改变，切换目录或分支也不会自动重定向 editable 安装。
+- 验证其他 worktree 时，显式使用 `D:\Chuo_Data\conda_envs\ChuoEnv\python.exe`，并临时把目标 worktree 的绝对 `src` 路径放到源码搜索路径首位：可在独立 Python 进程入口使用 `sys.path.insert(0, ...)`，或仅为验证进程设置临时 `PYTHONPATH`。不得写入用户级或系统级环境变量。
+- 若在 PowerShell 中临时设置 `$env:PYTHONPATH`，必须先记录原变量是否存在及其原值，用 `try/finally` 包围验证；退出时恢复原值，原先不存在则删除临时变量。不得无条件删除原有设置，也不得覆盖掉原有搜索路径后不恢复。
+- 每轮验证必须在同一解释器、同一源码路径设置下检查 `kaiji.__file__`，确认位于目标 worktree 的 `src\kaiji` 后才运行测试、Demo 或脚本。pytest 的 `pythonpath = ["src"]` 不能证明普通 Python 命令或 IDE 调试器也使用相同源码。
+- 补依赖时，不得顺带重装其他 worktree 的 Kaiji；优先仅安装所缺依赖，需要隔离安装项目本体时使用独立环境。Python 的 `-s` 只禁用 user-site，不会隔离或撤销共享环境中的 editable 安装。
+- 收尾时在清除临时源码路径设置后的全新 Python 进程中，确认裸 `import kaiji` 仍指向主工作区；同时检查安装来源记录与 Git 状态，保留人的代码改动。已运行的解释器可能缓存旧模块，来源验证须使用新进程。
 
 ## 教学任务设计规范
 
@@ -62,9 +71,18 @@ Kaiji 的核心对象是 Message、Tool、AgentState、Workflow、Checkpoint、T
 
 ## 当前课程审计状态
 
-- TODO6 已完成上一轮结构修复和分支同步；本轮独立静态复审发现的严格审批路由、窄测试覆盖、Checkpoint 自定义枚举序列化、`max_steps` 运行时类型校验和暂停线程复用测试缺口均已修复。
-- TODO7 已完成本轮独立审计和分支同步。
-- TODO8—TODO12 的正确答案已按新版方法完成契约、危险输入、强制要求追踪、8a—11e 逐子题答案绿灯与主分支只读红灯、TODO12 Live 复验及原生/框架横向职责审计，详见 `docs/freeze-audit-v0.2.md` 和 `docs/todo8-12-learning-path-audit.md`。这只冻结答案设计；11d/11e 辅助函数骨架、新增契约与测试尚未同步到练习分支，L1/L2/L3 也尚未挖题，完成逐子题绿灯/红灯前不得宣称教学分支已经验收。
+- TODO6 已完成上一轮结构修复和分支同步；本轮独立静态复审发现的严格审批路由、窄测试覆盖、Checkpoint 自定义枚举序列化、`max_steps` 运行时类型校验和暂停线程复用测试缺口均已修复。TODO8—TODO12 仍未按新版独立审计方法重新审计，继续保留下面的未审计声明。
+- TODO7 已完成本轮独立审计和分支同步；TODO8—TODO12 仍未按新版独立审计方法重新审计，不得据此宣称其完整。
+- TODO8—TODO12 在当前 main 已有实现，但尚未按新版独立审计方法重新审计；TODO11d/11e 已拆成 `_align_observations()` 与 `_aggregate_aligned()` 两个独立边界，必须分别验收。
+- TODO7、TODO13 与 TODO14 已进入当前 main 的提交历史；TODO15c/15d 在当前 HEAD 已有实现，旧“未实现”描述不再代表代码状态。2026-10-30 离线回归及交付范围见 `docs/delivery-baseline.md`；测试通过不替代课程独立审计。真实模型与 Azusa Live 不属于默认离线回归。
+- 当前工作树核对快照（2026-09-13，`HEAD=2c50022`）：606 collected、19 failed、1 skipped；586 passed 是由总数扣除推算，未直接读到 pytest 最终汇总行。该数字受当日 Windows ACL 清理和未提交工作区改动的时点影响，不能替代重新验收。
+
+## Reliability 课程分级
+
+- L1 提供函数签名、Pydantic 模型、MockTransport、完整输入输出契约和细粒度直接测试，学习者实现 Provider 协议边界。
+- L2 提供模块职责、公开模型、黑盒样例、边界测试和追踪表，学习者组织 Runner、Scorer 与 SQLite 生命周期。
+- L3 只提供自然语言需求、非目标、受控数据、黑盒验收命令、报告字段和结论边界，学习者完成 Harness、实验、恢复和分析。
+- 不要求同一功能在三个等级机械重写；每个子 TODO 都必须在答案绿灯、练习精确红灯、前后置反馈不互相遮挡后才能交付。
 
 ## 文档与注释规范
 
@@ -83,3 +101,10 @@ Kaiji 的核心对象是 Message、Tool、AgentState、Workflow、Checkpoint、T
 ## 明确非目标
 
 本阶段不做多 Agent、复杂长期记忆、任意代码执行、浏览器自动化、Kubernetes、分布式 Runtime、vLLM 内核或大型 MCP 生态。FastAPI 与 Docker Compose 属于收口加分项，不得阻塞核心能力。
+
+## 当前分支职责（2026-11-13）
+
+- `main`：人的已实现能力与展示验收；不合入尚在施工的 Chat/Web 或服务化能力。
+- `develop`：人的学习开发主线，主目录与共享 editable 安装保持原路径；已有实现不得重新挖空，人的未提交改动留在这里。
+- `solution`：参考实现、服务化扩展与 Chat/Web 工作；不得用答案覆盖人的实现。
+- 历史记录中的旧分支名只表示当时来源；当前导航使用上述三个名称。

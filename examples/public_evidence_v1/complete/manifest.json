@@ -1,0 +1,28 @@
+{
+  "schema_version": 1,
+  "experiment_id": "716cf6f52519490683afdb510c2c23e0",
+  "config": {
+    "suite": "reliability",
+    "provider": "scripted",
+    "model": "scripted",
+    "base_url": "http://127.0.0.1/unused-no-network",
+    "repeats": 1,
+    "temperature": 0.0,
+    "thinking": "disabled",
+    "max_tokens": 512,
+    "request_limit": 1,
+    "cost_limit_usd": 1.0,
+    "input_cost_per_million": 0.0,
+    "output_cost_per_million": 0.0,
+    "system_prompt_sha256": "628ce123337b158bae55146b15cd5f02ef70e697a12ea87dfd219d16cedbfe07",
+    "tool_schema_sha256": "89141231976b05c04fd8d62adbcb965dac1571abf37583954a3a878e35fe2c4b"
+  },
+  "config_fingerprint": "77dae39ad45c0fed64aff6d821f30ea96f3a57b33a0864684b8b189a4c3424ae",
+  "dataset_hash": "cc1ab3d9e6128b5b905f8687c50d6da8ea991862d48eda2f1285377a2d1e0344",
+  "expected_episode_count": 3,
+  "case_ids": [
+    "public-success",
+    "public-arguments",
+    "public-timeout"
+  ]
+}

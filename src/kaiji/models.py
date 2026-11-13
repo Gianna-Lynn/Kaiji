@@ -289,8 +289,25 @@ class RunResult(BaseModel):
         if self.stop_reason == StopReason.COMPLETED:
             if self.answer is None or not self.answer.strip():
                 raise ValueError("completed 运行必须包含非空回答")
+            # 旧单轮产物仅在 answer 保存最终回答，不能因聊天扩展而拒绝只读复核。
+            # 新 Runtime 会追加最终消息；一旦有普通 assistant 回答，就必须唯一且匹配。
+            final_messages = [
+                message for message in self.messages
+                if message.role == "assistant" and message.tool_call is None
+            ]
+            if final_messages and (
+                len(final_messages) != 1
+                or self.messages[-1] is not final_messages[0]
+                or final_messages[0].content != self.answer
+            ):
+                raise ValueError("completed 运行最后一条普通 assistant 消息必须等于 answer")
         elif self.answer is not None:
             raise ValueError("非 completed 运行不得携带最终回答")
+        elif any(
+            message.role == "assistant" and message.tool_call is None
+            for message in self.messages
+        ):
+            raise ValueError("非 completed 运行不得包含最终 assistant 回答")
         if not self.trace:
             raise ValueError("RunResult 必须包含完整 Trace")
         stop_events = [event for event in self.trace if event.event == "stop"]

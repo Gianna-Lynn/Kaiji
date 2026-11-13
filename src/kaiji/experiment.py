@@ -443,6 +443,9 @@ class ExperimentRunner:
                 json.dumps(bad, ensure_ascii=False, indent=2), encoding="utf-8"
             )
             aggregate = report.aggregate
+            # 引用指标零分母时为 None，报告不得把不适用值当浮点数格式化。
+            citation_precision = "N/A" if aggregate.citation_precision is None else f"{aggregate.citation_precision:.3f}"
+            citation_recall = "N/A" if aggregate.citation_recall is None else f"{aggregate.citation_recall:.3f}"
             markdown = (
                 f"# Kaiji Reliability Eval\n\n"
                 f"- 实验 ID：`{report.experiment_id}`\n"
@@ -450,7 +453,7 @@ class ExperimentRunner:
                 f"- Episode：{report.actual_episode_count}/{report.expected_episode_count}\n"
                 f"- Task Success：{aggregate.task_success_rate:.3f}\n"
                 f"- Tool Selection：{aggregate.tool_selection_accuracy:.3f}\n"
-                f"- Citation Precision / Recall：{aggregate.citation_precision:.3f} / {aggregate.citation_recall:.3f}\n"
+                f"- Citation Precision / Recall：{citation_precision} / {citation_recall}\n"
                 f"- Token：{aggregate.total_tokens}\n"
                 f"- 估算成本（USD）：{report.estimated_cost_usd:.6f}\n"
             )

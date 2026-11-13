@@ -1,0 +1,17 @@
+.git
+.github
+.worktrees
+.codex-*
+.kaiji-*
+.pytest_cache
+artifacts
+docs
+tests
+*.egg-info
+__pycache__
+*.py[cod]
+*.sqlite
+*.sqlite3
+*.jsonl
+.env
+.env.*

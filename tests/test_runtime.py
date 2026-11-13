@@ -14,6 +14,7 @@ from kaiji.models import (
     RunResult,
     StopReason,
     ToolCall,
+    ToolResult,
 )
 from kaiji.runtime import AgentRuntime
 from kaiji.tools import ToolExecutor
@@ -49,11 +50,14 @@ def test_runtime_backfills_valid_result_then_finishes() -> None:
     assert result.stop_reason == StopReason.COMPLETED
     assert result.answer == "The price is 90."
     assert result.successful_tool_results[0].output == {"final_price": "90"}
-    assert result.messages[-1].role == "tool"
-    assert result.messages[-2].tool_call == action_for().tool_call
+    assert result.messages[-2].role == "tool"
+    assert result.messages[-3].tool_call == action_for().tool_call
     assert (
-        result.messages[-1].tool_result.call_id == result.messages[-2].tool_call.call_id
+        result.messages[-2].tool_result.call_id
+        == result.messages[-3].tool_call.call_id
     )
+    assert result.messages[-1].role == "assistant"
+    assert result.messages[-1].content == result.answer
     assert [event.event for event in result.trace] == [
         "model_action",
         "tool_result",
@@ -117,6 +121,75 @@ def test_runtime_rejects_reused_tool_call_id_before_second_execution() -> None:
         "model_failure",
         "stop",
     ]
+    assert result.trace[-2].data["code"] == ProviderErrorCode.INVALID_RESPONSE
+
+
+def test_runtime_provides_prior_history_without_mutating_it() -> None:
+    """历史只供本轮上下文使用，返回消息和 Provider 副本均不污染调用方。"""
+
+    class MutatingProvider:
+        def __init__(self) -> None:
+            self.seen: list[Message] = []
+
+        def decide(self, messages: list[Message]) -> ModelCallResult:
+            self.seen = messages
+            messages[0].content = "Provider 修改的副本"
+            return ModelCallResult(
+                action=ModelAction(kind="final_answer", final_answer="第二轮回答"),
+                metadata=ModelCallMetadata(model="test", latency_ms=0),
+            )
+
+    provider = MutatingProvider()
+    runtime = AgentRuntime(provider, ToolExecutor(build_registry()))
+    history = [
+        Message(role="user", content="第一轮问题"),
+        Message(role="assistant", content="第一轮回答"),
+    ]
+
+    result = runtime.run("第二轮问题", history=history)
+
+    assert [message.content for message in provider.seen] == [
+        "Provider 修改的副本",
+        "第一轮回答",
+        "第二轮问题",
+    ]
+    assert history == [
+        Message(role="user", content="第一轮问题"),
+        Message(role="assistant", content="第一轮回答"),
+    ]
+    assert [message.content for message in result.messages] == [
+        "第二轮问题",
+        "第二轮回答",
+    ]
+
+
+def test_runtime_rejects_tool_call_id_reused_from_prior_history() -> None:
+    """旧回合已使用的调用标识不能被模型在新一轮复用。"""
+
+    old_call = action_for(call_id="old-call").tool_call
+    assert old_call is not None
+    history = [
+        Message(role="assistant", content="", tool_call=old_call),
+        Message(
+            role="tool",
+            content='{"final_price":"90"}',
+            tool_result=ToolResult(
+                call_id="old-call",
+                tool_name="calculate_discount",
+                ok=True,
+                attempts=1,
+                output={"final_price": "90"},
+            ),
+        ),
+    ]
+    provider = ScriptedDecisionProvider([action_for(call_id="old-call")])
+
+    result = AgentRuntime(provider, ToolExecutor(build_registry())).run(
+        "再次计算", history=history
+    )
+
+    assert result.stop_reason == StopReason.MODEL_FAILED
+    assert result.successful_tool_results == []
     assert result.trace[-2].data["code"] == ProviderErrorCode.INVALID_RESPONSE
 
 
@@ -206,7 +279,13 @@ def test_runtime_rejects_truthy_safety_configuration() -> None:
     "changes",
     [
         {"answer": None},
+        {"answer": "不一致的回答"},
         {"stop_reason": StopReason.TOOL_FAILED, "answer": None},
+        {
+            "stop_reason": StopReason.TOOL_FAILED,
+            "answer": None,
+            "messages": [Message(role="assistant", content="伪造回答")],
+        },
         {"steps": 3},
         {"model_calls": []},
         {"successful_tool_results": []},
@@ -233,3 +312,28 @@ def test_core_protocol_models_reject_unknown_fields() -> None:
     payload["unexpected"] = "would otherwise be dropped"
     with pytest.raises(ValidationError):
         ToolCall.model_validate(payload)
+
+
+def test_legacy_completed_result_round_trips_without_rewriting_messages() -> None:
+    """旧单轮产物没有最终 assistant 消息，复核不得补写消息或改变其字节结构。"""
+    result = AgentRuntime(
+        ScriptedDecisionProvider([action_for(), ModelAction(kind="final_answer", final_answer="90")]),
+        ToolExecutor(build_registry()),
+    ).run("calculate")
+    payload = result.model_dump(mode="json")
+    payload["messages"].pop()
+    restored = RunResult.model_validate(payload)
+    assert restored.messages[-1].role == "tool"
+    assert restored.model_dump(mode="json") == payload
+
+
+def test_completed_result_rejects_multiple_final_assistant_messages() -> None:
+    """兼容旧消息外形不能放宽已存在回答的唯一性和末尾约束。"""
+    result = AgentRuntime(
+        ScriptedDecisionProvider([ModelAction(kind="final_answer", final_answer="90")]),
+        ToolExecutor(build_registry()),
+    ).run("calculate")
+    payload = result.model_dump(mode="json")
+    payload["messages"].insert(0, payload["messages"][-1].copy())
+    with pytest.raises(ValidationError, match="最后一条普通 assistant"):
+        RunResult.model_validate(payload)

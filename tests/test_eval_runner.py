@@ -50,7 +50,7 @@ def test_todo_14a_runner_executes_runtime_and_preserves_raw_result() -> None:
     assert episode.case_id == "case-1"
     assert episode.repeat_index == 2
     assert episode.result.stop_reason == StopReason.COMPLETED
-    assert episode.result.messages[-2].tool_call.call_id == "call-case-1"
+    assert episode.result.messages[-3].tool_call.call_id == "call-case-1"
     assert episode.result.trace[-1].event == "stop"
     assert len(episode.result.model_calls) == 2
 

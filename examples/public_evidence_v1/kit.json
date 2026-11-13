@@ -1,0 +1,24 @@
+{
+  "kind": "self-authored-scripted-contract-samples",
+  "license": "CC0-1.0",
+  "real_model_requests": 0,
+  "base_commit": "d88a632912d5ee66c711b52c95098bf11cb517f8",
+  "generation_sources_sha256": {
+    "src/kaiji/public_evidence.py": "8fbacb67828716ecebec239526fc627bc8e737bfa8fdd96131640f9c515155ff",
+    "src/kaiji/eval_scorer.py": "5de99218ab6d264f8c3ba1b85ea56187110b7db7b0c836a305dbd4329e0324d5",
+    "src/kaiji/formal_runner.py": "53e0cd04e25a39eb114050cf9bbca2ad854113bdf8720b1d643ff1c5db9fcb67",
+    "src/kaiji/tools.py": "95b907e95a245f1422c50c450f632495e140d1271fa64bd45bf89cc516522027"
+  },
+  "files_sha256": {
+    "cases.jsonl": "8948485c01ad304524de2c7442e46e3bbdc8044c73bddaac7ed29066598d4b5f",
+    "complete/bad_cases.json": "98a604c1ae3d46d6fa735dd74d3cf5361fc2fe7cb1c8f427de5c9c9b9e689e8b",
+    "complete/episodes.jsonl": "162ac9c69e113c719a57f2522d7b0b2b50c7c5810e32b2cc422e3aa1178e5832",
+    "complete/manifest.json": "8ad2bae9aefea7af1d951361cef20cac6d2bbbecc5e6ef13f1ab7d3eb3a44488",
+    "complete/report.json": "075da2cc2cf7dc61d7dd89a56c55aed5d796fbc608383f3487721f50cb1c2449",
+    "complete/request-ledger.json": "3c419fea7c07424e706811de8ff97bccb2f52e36c2cf7b7824d56d06a40a1f6b",
+    "partial/episodes.jsonl": "66f7895b86b12ac0464c9b848004ab996ad87ae52c1237539668726d611b2474",
+    "partial/manifest.json": "8ad2bae9aefea7af1d951361cef20cac6d2bbbecc5e6ef13f1ab7d3eb3a44488",
+    "partial/report.json": "c8ab7696b0eb8b9c100044b77f62148811100cb9a3279b4ccd8099548cc17425",
+    "partial/request-ledger.json": "3c419fea7c07424e706811de8ff97bccb2f52e36c2cf7b7824d56d06a40a1f6b"
+  }
+}

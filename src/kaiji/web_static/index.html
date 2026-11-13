@@ -1,0 +1,38 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="color-scheme" content="light">
+    <title>Kaiji 本地聊天</title>
+    <link rel="stylesheet" href="/static/style.css">
+    <script src="/static/app.js" defer></script>
+  </head>
+  <body>
+    <main class="shell">
+      <header class="topbar">
+        <div>
+          <p class="eyebrow">KAIJI · LOCAL CHAT</p>
+          <h1>和 Kaiji 聊聊</h1>
+          <p class="subtitle">本地运行对话界面，模型请求由配置的服务处理。</p>
+        </div>
+        <button id="reset-button" class="reset-button" type="button">清空对话</button>
+      </header>
+
+      <section id="chat-log" class="chat-log" aria-live="polite" aria-label="聊天记录"></section>
+
+      <section class="composer-card" aria-label="发送消息">
+        <form id="chat-form">
+          <label class="visually-hidden" for="message-input">你的消息</label>
+          <textarea id="message-input" name="message" rows="3" maxlength="4000" placeholder="输入消息，Enter 发送，Shift+Enter 换行" required></textarea>
+          <div class="composer-footer">
+            <p id="status-line" class="status-line" role="status">正在恢复本地会话…</p>
+            <button id="send-button" class="send-button" type="submit">发送</button>
+          </div>
+        </form>
+      </section>
+
+      <p class="privacy-note">聊天记录只保存在当前进程内存；审计日志默认不保存对话正文。</p>
+    </main>
+  </body>
+</html>

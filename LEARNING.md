@@ -1,5 +1,7 @@
 # Kaiji 学习驾驶台
 
+本地长期分支为 `main`、`develop`、`solution`。日常学习在 develop；编号 TODO 是课程定位，不代表当前仍未实现。展示验收与教学独立审计分别记录，见 `docs/branch-migration.md`。
+
 这份文档主要写给人。它不只是告诉你“哪些测试要通过”，还说明每一阶段为什么存在、
 你应该亲手掌握什么，以及什么时候才适合查看标准答案。
 
@@ -39,11 +41,12 @@ get_chunk_by_id(chunk_id)
 - Pydantic 数据模型、目录结构、Mock、Demo 与测试框架；
 - Kaiji 和 Azusa 的完整标准答案分支；
 - 不依赖 API key、GPU 或在线服务的离线验证路径；
-- 默认不阻塞离线测试、但 TODO 12 必须实际完成的 Azusa BM25 HTTP 联调路径。
+- 默认不阻塞离线测试、但 TODO 12 必须实际完成的 Azusa BM25 HTTP 联调路径；
+- TODO 13—15 的 Provider、Eval 与可靠性实验课程脚手架、受控 fixture 和离线验收路径。
 
 人需要完成：
 
-- `main` 中标记为 `TODO 1`—`TODO 12` 的关键逻辑；
+- 按 `TODO 1`—`TODO 15` 路线理解、实现与解释关键逻辑；当前 develop 已有多项实现，编号不代表仍是空骨架；
 - 每完成一课，运行对应窄测试；
 - 在看答案前，先解释自己的设计和失败边界；
 - 最后完成 Kaiji 与 Azusa 的真实跨仓库验收。
@@ -56,27 +59,30 @@ Kaiji：
 
 | 分支 | 用途 |
 |---|---|
-| `main` | 人实际写 TODO 的练习分支 |
-| `solution/kaiji-v0` | TODO 1—15 的完整答案、真实 Azusa 集成与 Reliability Eval 基线 |
+| `main` | 已验收的展示范围，保留人的实现 |
+| `develop` | 人的学习开发主线，保留在途改动 |
+| `solution` | TODO 1—15 的完整答案、真实 Azusa 集成与 Reliability Eval 基线 |
+
 
 Azusa：
 
 | 分支 | 用途 |
 |---|---|
-| `main` | 人完成语义网关与 Azusa v2 课程 TODO |
-| `solution/azusa-v2` | 可运行的完整参考答案 |
+| `main` | 对外展示，不提供过滤与 ACL 练习 |
+| `develop` | 人完成语义网关与 Azusa 课程练习 |
+| `solution` | 可运行的完整参考答案 |
 
 同一 Python 环境的 editable install 只能指向一个工作树。在 Kaiji 答案 worktree 运行
 `python -m kaiji.*` 前，应临时把该 worktree 的 `src` 放入 `PYTHONPATH`，并打印
-`kaiji.__file__` 确认没有误载 main；具体命令见 `docs/curriculum.md`。回到 main 后清除
+`kaiji.__file__` 确认没有误载 develop；具体命令见 `docs/curriculum.md`。回到 develop 后清除
 该临时变量，避免答案代码越过 TODO。这条检查尤其重要：命令成功不等于导入来源正确。
 
-日常学习始终留在 Kaiji `main`。不要为了看答案直接把 solution 分支合并进 main。
+日常学习始终留在 Kaiji `develop`。不要为了看答案直接把 solution 分支合并进 main。
 
 卡住时，先只查看一个文件的差异：
 
 ```powershell
-git diff main..solution/kaiji-v0 -- src/kaiji/tools.py
+git diff develop..solution -- src/kaiji/tools.py
 ```
 
 建议顺序：
@@ -99,24 +105,30 @@ python -m pytest tests/test_scaffold.py
 python -m kaiji.demo
 ```
 
-练习初始状态应当是：
+以下是历史初始脚手架状态，不是当前 develop 的预期输出：
 
 - `tests/test_scaffold.py`：3 个测试通过；
 - `kaiji.demo`：可运行，但返回 `max_steps`、`steps=0`；
 - 全量测试：大量 TODO 测试失败；
 - live integration：未设置环境变量时跳过。
 
-这说明环境和契约正常，尚未完成的是人的实现。不要在第一课一开始就以“全量 pytest
-必须全绿”为目标；先让当前课的窄测试转绿。
+当前 develop 的 Demo 已返回折扣结果与 `completed`；当前回归与分支差异见
+`docs/delivery-baseline.md`。历史初始红灯不能代替当前验收；学习仍应围绕当前课的窄测试和解释能力。
 
 ## 5. 推荐学习路线
 
-课程被分成四站。必须按顺序前进，因为后面的 Adapter、Workflow 和 Eval 都依赖前面的
-工具执行语义。
+课程被分成五站。必须按顺序前进，因为后面的 Adapter、Workflow、Eval 和可靠性实验都
+依赖前面的工具执行语义。
 
 ### 第一站：亲手建立可靠的原生 Tool Agent
 
 #### TODO 1：Tool Registry
+
+##### 这是什么，为什么需要它
+
+Tool Registry 是 Kaiji 的工具目录：集中声明 Agent 被允许看见的工具、输入输出 Schema 与 handler。模型能提出调用，但不能凭自由文本获得任意能力；Registry 让工具边界可审查、可发现。
+
+没有它，工具定义和权限会散落在 Runtime 分支中，新增工具会牵连控制流。本课只负责声明与查找，不决定调用、重试或失败策略；完成后，人能判断一次调用是否指向已注册、Schema 已公开的能力。
 
 文件：`src/kaiji/tools.py`
 
@@ -136,6 +148,12 @@ python -m pytest tests/test_registry.py
 答: Registry只负责检索工作, 返回"某某工具是有还是没有".Executor在拿到Registry的返回结果后,决定怎么使用.Executor有整个 Agent 循环的控制权（State、Budget、Trace、Approval）,由它负责决策.
 
 #### TODO 2：调用前校验
+
+##### 这是什么，为什么需要它
+
+调用前校验是工具边界的门禁：先确认工具存在，再将模型给出的 JSON 参数解析为 Pydantic 输入模型，只有通过后 handler 才能接触网络、文件或业务服务。
+
+模型输出不天然可信。没有这层门禁，拼错名称或缺失参数会混成业务失败、甚至触发副作用，attempts 与重试统计也会失真。本课只拒绝无效请求，不处理 handler 内部的超时和异常；完成后，人能区分“模型填错”与“工具已开始执行但失败”。
 
 文件：`src/kaiji/tools.py`
 
@@ -157,6 +175,12 @@ attempt 表示一次真正发起 handler 的执行尝试。执行器会先查找
 是否继续执行下一轮由 retryable 单独决定。未知工具和参数错误通常不可重试；暂时性网络错误或超时可能允许重试。两者的职责不同：attempts 记录执行次数，retryable 决定失败后是否继续。
 
 #### TODO 3：执行、结果校验与有界重试
+
+##### 这是什么，为什么需要它
+
+Tool Executor 把合法调用请求变成可被 Agent 信任的 ToolResult：它限制等待时间、区分可恢复与不可恢复失败、限制重试次数，并校验 handler 输出。网络会抖动，handler 也可能返回形似成功但结构错误的数据，二者都不能直接进入模型上下文或引用。
+
+没有统一 Executor，每个工具都会各自发明 timeout、错误格式和 retry 规则，造成无限重试、吞错或坏数据伪装成功。本课只做一次额外重试来学习“恢复必须有预算”，不实现生产级退避、熔断或队列；完成后，人能解释一个结果为何可信、一次失败为何停止或再试。
 
 文件：`src/kaiji/tools.py`
 
@@ -186,6 +210,12 @@ python -m pytest tests/test_executor.py
 
 #### TODO 4：原生 Agent Loop
 
+##### 这是什么，为什么需要它
+
+原生 Agent Loop 是 Kaiji 最小的受控 Runtime：它反复取得模型动作、执行必要工具、回填已校验结果，并在明确条件下终止。Agent 不是一次模型调用，而是会累积状态、触发外部能力的有限状态机。
+
+没有显式 Loop，重复调用、工具失败、无最终答案和无限思考都会变成隐式行为，既不能诊断，也无法阻止失败结果进入答案。本课建立最小可靠闭环，不实现自主规划、长期记忆或任意代码执行；完成后，人能从 question 追到 final answer 或明确 stop reason。
+
 文件：`src/kaiji/runtime.py`
 
 完成：
@@ -211,6 +241,7 @@ python -m pytest tests/test_registry.py tests/test_executor.py tests/test_runtim
 此时人应该能脱离代码解释完整 Tool Agent Loop。
 答:
 
+```
 run(question)
 ├─ 初始化：message_list=[user], trace_list=[], successful_tool_results=[], seen_call_signatures=set()
 │
@@ -247,17 +278,24 @@ run(question)
     └─ 循环自然耗尽
         ├─ trace += stop(MAX_STEPS)
         └─ return MAX_STEPS                     ← 出口④
+```
 
 
 ### 第二站：理解框架究竟替你做了什么
 
 #### TODO 5：LangChain 对照
 
+##### 这是什么，为什么需要它
+
+这一课把 TODO 1—4 中亲手实现的消息与工具边界映射到 LangChain 的 Message、StructuredTool 与 Runnable。框架能减少组合代码，却不会自动替人定义合法输入、可信结果或 timeout、权限责任。
+
+没有这层对照，学习框架 API 容易变成“能跑但不知道发生什么”的记忆题。本课用最小且有损的映射揭示框架包装的机械工作，不把 Kaiji 的可靠性边界交给框架；完成后，人能指出原生对象的框架对应物与仍由 Kaiji 负责的部分。
+
 文件：`src/kaiji/langchain_compare.py`
 
 这一课只比较表达方式，不改变 Kaiji 已经建立的可靠性边界。当前 `Message` 没有
 LangChain 原生的 `tool_calls` 字段，因此这里采用明确的教学用有损映射：
-
+  
 | Kaiji 消息 | LangChain 消息 | 字段契约 |
 |---|---|---|
 | `role="user"` | `HumanMessage` | 原样保留 `content` |
@@ -309,6 +347,12 @@ Kaiji？
 
 #### TODO 6：LangGraph 状态工作流
 
+##### 这是什么，为什么需要它
+
+LangGraph 工作流把多步控制流显式表达为可持久化的 State、Node、Edge 与条件分支。它适合“检索失败后只改写一次”和“有副作用前必须人工确认”这类流程：执行到哪里、为何跳转、暂停后如何继续都成为状态机的一部分。
+
+没有显式工作流，重试计数、审批决定和恢复位置容易藏在局部变量或调用栈中；中断后无法可靠恢复，也难审查是否绕过审批。本课用 LangGraph 表达既定流程，不重新实现 TODO 4 的完整 Tool Agent，也不把框架 Checkpoint 混同于长期 Memory；完成后，人能解释 Interrupt 前后哪些状态被保存与恢复。
+
 文件：`src/kaiji/langgraph_workflow.py`
 
 ##### 先知道这一课最终要做出什么
@@ -344,11 +388,12 @@ ToolExecutor 可靠性也不属于本课实现范围。
 
 先明确 State 字段的职责：
 
-`AgentState` 使用 `TypedDict(total=False)`：每个节点只返回自己负责的局部更新，
-LangGraph 再把它合并进当前 State；节点返回字典不是整份状态的替代品。因此 rewrite
-只更新查询与重试计数，审批节点也不能顺手清空证据、原问题或其他无关字段。
-这里的 `total=False` 只约束节点可以返回局部更新，不表示运行中的 State 可以随意缺少
-基础字段；`_initial_state()` 会在首次进入图时建立完整状态，后续节点依赖这项不变量。
+`AgentState` 使用 `TypedDict(total=False)`：它只表示字段在静态类型层面可以缺省，
+不表示运行中的 State 可以随意缺少基础字段。`_initial_state()` 会在首次进入图时
+建立完整状态，后续节点依赖这项不变量。
+
+本课的节点返回局部更新字典，LangGraph 会将其合并进当前 State，未返回的字段保留原值；
+因此 rewrite 只更新查询与重试计数，审批节点也不能顺手清空证据、原问题或其他无关字段。
 
 | 字段 | 含义 |
 |---|---|
@@ -379,7 +424,7 @@ Router Node
   │               ├─ 达到上限   → Max Steps → END
   │               └─ 不可恢复   → Failure → END
   │
-  └─ confirm → Confirmation Node
+  └─ confirm → Confirmation Node(执行request_confirmation, 等待人工决定)
                   ↓
              interrupt(payload) 暂停并保存 Checkpoint
                   ↓
@@ -387,7 +432,7 @@ Router Node
                   ↓
              Command(resume=decision)
                   ↓
-             节点返回 {"approved": decision}
+             Confirmation Node返回 {"approved": decision}(人工决定)
                   ↓
              confirmation_route(state)〔条件边判断〕
                   ├─ approved → Approved → END
@@ -487,6 +532,12 @@ LangGraph Checkpoint 误当成长期 Memory。
 
 #### TODO 7：Azusa Adapter
 
+##### 这是什么，为什么需要它
+
+Azusa Adapter 是 Kaiji 与检索系统间的防腐层：它将 HTTP、旧版 vector/record 协议和远端失败翻译成稳定的 `SearchResponse`、`ChunkResponse` 与结构化错误。Kaiji 只需要可信证据，不应依赖 Azusa 内部检索实现；Azusa 也无需了解 Agent Loop、Trace 或审批。
+
+没有 Adapter，网络与兼容细节会渗入 Registry、Runtime 和模型消息，接口演进会牵连整条 Agent 链。本课建立稳定的只读服务边界与旧接口兼容，不实现 Azusa 内部检索、缓存、并发调优或无限重试；完成后，人能替换 Mock、语义 HTTP 与 Legacy Adapter 而保持上层语义一致。
+
 施工主线先建立两条类型流。正常数据链是：
 `ToolCall.arguments → SearchAzusaArgs / GetChunkArgs → Registry handler → AzusaAdapter
 → SearchResponse / ChunkResponse（Pydantic 对象）→ model_dump(mode="json") → JSON
@@ -524,24 +575,27 @@ GET /chunks/{chunk_id}
 
 | 失败 | `retryable` |
 |---|---:|
-| 参数或其他 HTTP 4xx | `False` |
+| 参数错误或 HTTP 3xx | `False` |
+| HTTP 429 | `True` |
+| 除 429 外的 HTTP 4xx | `False` |
 | HTTP 5xx | `True` |
 | timeout / network error | `True` |
 | 非法 JSON 或响应 Schema 不匹配 | `True` |
 
-3xx 在本课按非 5xx 的 HTTP 错误处理，因此为不可重试；429 也按 v0 简化策略归入全部
-4xx，不可重试。这个分类是 Kaiji v0 的教学策略，不是通用生产规则；生产系统可能
-单独处理 408、425、429、`Retry-After`、重定向和协议漂移。
+3xx 在本课作为不可重试的 HTTP 错误处理。429 表示服务端限流，稍后再次调用可能恢复，
+因此单独标记为可重试；除 429 外的其他 4xx 表示当前请求本身存在问题，标记为不可重试。
+HTTP 5xx、timeout 和网络错误可能来自瞬时故障，因此标记为可重试。
 
-Adapter 只负责分类并抛出 `AzusaAdapterError`，自身不循环重试；`ToolExecutor` 在
-`max_retries=1` 的工具定义下决定是否再执行一次。完成：
+这只是错误分类，不表示 Adapter 自己执行重试。Adapter 每次只发起一次计划内 HTTP
+操作；真正的重试由 `ToolExecutor` 根据工具的 `max_retries=1` 执行，最多额外尝试一次。
+当前版本不解析 `Retry-After`，也不等待或执行无界退避。
 
 | 失败所在层 | 行为 |
 |---|---|
 | Pydantic 工具参数不合法 | Executor 在调用 Adapter 前拒绝，`attempts=0` |
 | Legacy 本地 encoder/resolver 抛异常或返回非法值 | `retryable=False` |
-| 远端 timeout/network/5xx/非法 JSON/Schema | `retryable=True` |
-| 远端 4xx | `retryable=False` |
+| 远端 timeout/network/429/5xx/非法 JSON/Schema | `retryable=True` |
+| 远端除 429 外的 4xx | `retryable=False` |
 
 - Mock Adapter；
 - 语义 HTTP Adapter；
@@ -552,7 +606,8 @@ Adapter 只负责分类并抛出 `AzusaAdapterError`，自身不循环重试；`
 
 Legacy Adapter 只接受 `hnsw`，向 `/search` 发送 `vector`、`k` 和固定
 `ef_search=16`，再逐条读取 `/record/{id}`。它必须保留 `score/source/page`，从
-metadata 恢复 `chunk_id`，再用注入的 resolver 恢复正文。encoder 必须返回非空
+metadata 恢复 `chunk_id`，再用注入的 resolver 恢复正文。实际 Legacy 响应包含
+`vector`；Kaiji 不消费它，因此允许缺失，但存在时必须是有限数值列表。encoder 必须返回非空
 有限数值列表（允许 int/float，内部统一转成 float），其中元素必须有限且不能是布尔值；resolver 必须返回非空、非纯空白
 字符串。metadata 中的 `chunk_id` 同样必须是非空、非纯空白字符串，不能把任意对象用
 `str()` 强行伪装成标识。`record_id` 是兼容层保留字段，远端 metadata 已有该键时明确
@@ -604,13 +659,17 @@ python -m pytest tests/test_azusa_adapter.py
 
 #### TODO 8：Checkpoint
 
+##### 这是什么，为什么需要它
+
+Checkpoint 是一次运行在某个时刻的完整恢复快照，回答“这条任务中断后从哪里继续”。例如审批前暂停的工作流需要保存问题、待办动作与已取得证据，之后才能在同一 thread 上继续，而不是从头猜测。
+
+没有 Checkpoint，运行只能依赖内存；进程退出、服务重启或人工等待时，执行位置与状态都会丢失。原子写入和显式损坏报错避免半份快照伪装成正常状态。本课只实现单机文件快照，不解决多进程并发、冲突合并或通用业务 State 校验；完成后，人能区分它与 LangGraph MemorySaver、长期 Memory 的职责。
+
 文件：`src/kaiji/persistence.py`
 
 Checkpoint 是一次执行的完整恢复快照。JSON 第一层按 `thread_id` 隔离，第二层按
 `checkpoint_id` 保存 `state`。相同线程和编号再次保存时覆盖旧状态，并把这次成功的
 `save` 视为最新写入；因此覆盖旧编号后，该编号也必须成为 `latest()` 的结果。
-两层身份都必须是真正的非空、非纯空白字符串；查询入口与外部已有文件使用相同标准。
-文件必须是标准有限 JSON，Python 默认可解析的 `NaN`/`Infinity` 仍属于损坏数据。
 
 `load()` 和 `latest()` 找不到目标时返回 `None`，恢复出的数据必须重新经过
 `Checkpoint` 外壳校验。键不存在才表示“找不到”；键存在但值为 JSON `null`、列表或
@@ -635,6 +694,12 @@ python -m pytest tests/test_persistence.py -k checkpoint
 
 #### TODO 9：Memory
 
+##### 这是什么，为什么需要它
+
+Memory 是调用方明确选择、跨运行长期保存的少量事实，例如用户偏好或稳定设置；它不是聊天全文，也不是精确恢复执行位置的 Checkpoint。它让未来任务使用经过选择和隔离的信息，而不必永久携带整段历史或内部状态。
+
+没有这层区分，Message History、运行 State 和长期事实会混在一起，既难控制作用域，也会把临时状态误作用户偏好。本课只提供可靠存取、覆盖和用户隔离，不自动判断该记住什么，也不做向量记忆、摘要或召回；完成后，人能解释一条数据为何应写进 Memory 而非其他状态容器。
+
 文件：`src/kaiji/persistence.py`
 
 Memory 是调用方策略选择长期保留的少量事实，不是整段运行状态。Store 不负责猜测
@@ -651,8 +716,6 @@ Memory 同样严格区分“键不存在”和“键存在但记录损坏”：J
 `entry.key`，否则无法可靠判断覆盖和查询的是哪条事实。`put()` 在写入新事实前也必须
 校验已有 Store；不能借一次看似成功的新写入，把旧损坏静默保留下去。Memory 与
 Checkpoint 共用同目录临时文件再 `replace` 的原子写入边界，替换失败时旧文件不变。
-`user_id`、外层 key 与 `entry.key` 均不得为空白；未知记录字段不能静默丢弃，非标准
-`NaN`/`Infinity` 也不能穿过读取边界。
 
 练习同样从读取边界开始：**9a `_read_all()` 全量校验 → 9b `put()` → 9c `get()` →
 9d `list()`**。这样写入、单条读取和列表读取会共享同一套损坏数据结论，不会各自长出
@@ -677,6 +740,12 @@ python -m pytest tests/test_persistence.py -k memory
 
 #### TODO 10：Trace 保存与重放
 
+##### 这是什么，为什么需要它
+
+Trace 是一次已结束 Agent 运行的可审计过程记录：模型做了什么、工具怎样返回、最终为何停止。它把“这次回答不对”的模糊印象变成可逐步查看和比较的事实，也是调试、事故分析与评测取证的基础。
+
+没有 Trace，最终答案无法说明依据或失败位置，重放也可能因记录含糊产生不同理解。本课保证 Trace 的结构、持久化和稳定的人类可读回放，不替业务判断答案正确性，也不实现分布式链路追踪或并发 writer；完成后，人能用 run_id 还原停止原因和事件顺序。
+
 文件：`src/kaiji/tracing.py`
 
 完成 JSONL append、load、迭代和人类可读 replay。这里的字段职责是：
@@ -685,8 +754,6 @@ python -m pytest tests/test_persistence.py -k memory
   检索信息，不代替逐事件详情；
 - `events` 保持 Runtime 产生的原始顺序；每个 `TraceEvent.data` 只描述该事件当时的
   结构化事实，不是 Message 正文，也不是 run 级 metadata；
-- `step` 必须是真正的正整数并按时间线非递减；`data` 与 `metadata` 必须是有限 JSON，
-  不能依赖写盘时才偶然失败；
 - `TraceRecord.stop_reason` 是便于索引和统计的终止摘要，必须与唯一且位于末尾的
   `stop` Event 的 `data.reason` 相同；空 events、无 stop、多个 stop、stop 后仍有事件、
   缺失或非法 reason 都属于结构破坏；
@@ -715,6 +782,12 @@ python -m pytest tests/test_tracing.py
 ```
 
 #### TODO 11：固定 Eval
+
+##### 这是什么，为什么需要它
+
+固定 Eval 是一组可重复运行的题目与统一评分口径，用于检验 Agent 是否持续完成应做的事，而不只是偶然演示出一段不错的答案。它将工具选择、参数、重试、引用、步骤和延迟变为可比较指标，使改动后能够定位具体哪项能力退化。
+
+没有固定用例和稳定分母，“成功率”会随测试集合、记录顺序或缺失字段悄悄改变，团队也难区分模型选错、工具失败与统计错误。本课建立确定性 case/observation 聚合边界，不把金标 fixture 当作真实 Agent Eval，也不解决开放域质量或在线 A/B 实验；完成后，人能说明每项指标回答的问题及其分母为何固定。
 
 文件：
 
@@ -752,17 +825,6 @@ runner 必须按下表把运行事实统一映射为 Observation，不能到写�
 | `latency_ms` | runner 接受 case 到得到终止结果的墙钟毫秒，包含 Adapter 和内部重试时间 |
 | `citation_supported` | 所有引用均来自成功且校验过的证据，并实际支持回答；不适用为 `None` |
 
-TODO14 的 `required_answer_facts` 使用 NFKC、大小写折叠和连续空白折叠后的连续
-字面量匹配；事实两端的 ASCII 字母、数字或下划线不能与回答中的同类 ASCII 字符
-相邻，因此 `90` 不匹配 `190`；CJK 字符不参与该西文标识边界。它不做语义蕴含、
-否定识别、同义词、翻译或数值等价判断。
-Native TODO14 的 `retry_recovered` 只观察 `ToolResult.attempts` 统计 Executor
-retry；TODO11 的 query rewrite 读取自己的 `retry_count`/`step_count`，Provider
-transport retry 不计入该业务指标。
-
-因此 `selected_tool` 非空而 `tool_calls=0` 并不矛盾：模型可能选了工具，但参数 Schema
-在 handler 前拒绝了它。`tool_calls` 不是 Message 数，也不是模型 action 数。
-
 覆盖契约要求 case ID 和 observation ID 各自唯一，而且两边集合完全相等。适用指标的
 观测值如果为 `None`，按失败计入既定分母，不能静默缩小分母。分母固定为：
 
@@ -782,10 +844,6 @@ Observation 输入顺序不承担身份语义，聚合器必须先按 `case_id` 
 P50/P95 使用排序后的 nearest-rank 定义。所有计数和延迟不得为负，成功或不必要调用数
 不得超过实际调用数。测试必须使用混合成功/失败观测给出精确分数；全满分样本不能单独
 证明公式正确。
-
-布尔和整数安全字段使用严格运行时类型，不能接受 `1`、`"false"` 或 `True` 冒充另一
-种语义。没有工具选择时 `arguments_correct` 必须为 `None`；重试恢复至少对应两次实际
-handler 尝试；受支持引用至少来自一次成功工具结果。
 
 `reference_observation()` 只构造与 case 预期停止状态内部一致的合成观测，用来证明
 指标公式；它不得把预期失败的工具伪造成成功，也不能证明 20 条 Agent 行为已经跑过。
@@ -814,10 +872,18 @@ python -m kaiji.eval_demo
 
 #### TODO 12：真实 Azusa HTTP 联调
 
+Azusa 侧对应课程为 `AZUSA-GW-05`，其前置服务端实现为 `AZUSA-GW-01`—`04`。
+
+##### 这是什么，为什么需要它
+
+真实 HTTP 联调让课程从 Mock 小闭环走向跨仓库事实闭环：Kaiji 真实请求 Azusa，获得检索命中，再按 `chunk_id` 取回同一份证据正文。它验证的不只是某个类在隔离测试中“像是正确”，而是双方关于 URL、Schema、ID 与证据语义的契约能跨进程共同成立。
+
+没有这一步，Mock 测试全绿仍可能掩盖路由、端口或序列化不一致。本课只验证最小 BM25 数据闭环，不把它误当作真实语料质量、性能压测或生产部署验收；因此 live test 必须实际通过，不能以 skip 代替。完成后，人能证明成功引用来自 Azusa 实际返回且可按 ID 再次取得的证据。
+
 这一课跨越两个仓库。普通全量测试在未设置 `AZUSA_GATEWAY_URL` 时会 skip live test；
 因此 TODO 12 的完成条件不是“全量测试没有失败”，而是该文件明确显示 `1 passed`，不能
-是 `1 skipped`。标准答案闭环使用 Azusa 的 `solution/azusa-v2` 先验证；人真正完成
-课程时必须在自己的 `main` 上得到同样结果。两个分支都包含网关脚本，但命令仍须显式
+是 `1 skipped`。标准答案闭环使用 Azusa 的 `solution` 先验证；人真正完成
+课程时必须在自己的 `develop` 上得到同样结果。两个分支都包含网关脚本，但命令仍须显式
 切换分支，避免把答案态与课程态混淆。
 
 本机 Windows 将 `2991..3090` 列为 TCP 排除端口，默认 `3010` 会触发
@@ -828,7 +894,7 @@ python -m kaiji.eval_demo
 
 ```powershell
 Set-Location F:\Repositories\Azusa
-git switch main
+git switch develop
 Set-Location rag
 
 python -m pytest tests/test_kaiji_gateway.py
@@ -860,11 +926,167 @@ python -m pytest -q -rs tests/test_azusa_live_integration.py
 4. 再按 chunk_id 取回完整正文；
 5. 验证两次正文一致。
 
+##### 最小调用链
+
+搜索请求从 Kaiji 的 `AzusaHttpAdapter` 发出，经 `POST /search_azusa` 到达 Azusa
+Gateway；Gateway 调用 BM25 检索，将内部 `EmbeddingRecord` 映射为 `hits` JSON，
+Kaiji 再将响应解析为 `SearchResponse`。
+
+随后 Kaiji 使用命中的 `chunk_id` 请求 `GET /chunks/{chunk_id}`。Gateway 通过
+`_records_by_chunk_id` 精确取回正文并返回，Kaiji 最后验证搜索结果与回读证据的正文一致。
+
+这条链路验证的是两个仓库之间的请求、响应和证据身份契约，而不是 BM25 的语料质量或
+完整搜索性能。
+
 完成后可以清除当前终端的临时变量：
 
 ```powershell
 Remove-Item Env:AZUSA_GATEWAY_URL
 ```
+
+### 第五站：把 Eval 做成可复现的可靠性实验
+
+TODO 13—15 是第一批课程之后的第二批训练。它们不是把 TODO 1—12 的功能机械重写
+一遍，而是逐步撤掉脚手架：TODO13 练 Provider 协议边界，TODO14 练 Runner、Scorer
+和 SQLite 生命周期，TODO15 练完整的故障对照、恢复和实验产物。三课默认都走离线
+Mock/Scripted 路径，不读取 API key，也不能把替身结果描述成真实模型成绩。
+
+详细的公开契约、非目标、字段追踪和反向验收记录分别见：
+`docs/reliability-course-l1-l3.md`、`docs/reliability-eval-contract.md`、
+`docs/reliability-eval-traceability.md` 和 `docs/reliability-course-validation.md`。
+本节给出主线上的学习目标、依赖顺序和验收入口；如果本节与详细契约出现冲突，以
+详细契约和测试中的明确边界为准，并应先修正文档冲突再继续实现。
+
+#### TODO 13：Provider 协议边界
+
+##### 这是什么，为什么需要它
+
+Provider 是模型服务与 Kaiji Runtime 之间的协议边界：它把 System Prompt、完整消息历史
+和工具 Schema 变成一次请求，再把服务响应解析成严格的 assistant 文本或单个工具动作。
+本课的输入是 Kaiji 的消息、工具定义和 Provider 配置，输出是可供 Runtime 消费的成功
+结果或结构化 Provider 失败；Provider 自己不得隐藏重试，也不得把鉴权信息带入请求记录、
+Trace 或错误文本。
+
+本课只实现 `src/kaiji/providers/openai_compatible.py` 已给出的接口，不新增 Provider
+抽象，不做并行工具调用、流式协议、真实模型回归或服务压测。关键不变量是：每个模型回合
+最多一个工具调用；assistant 工具调用后必须紧跟同 `tool_call_id`、同工具名的 tool
+结果；关键字段严格校验；非法 JSON、非有限数值、协议错配和空白最终回答不得进入成功路径。
+
+练习按依赖顺序实现：**13a 请求载荷 → 13b 消息与调用 ID 配对 → 13c 响应解析 →
+13d 请求元数据与失败分类**。13d 还必须明确区分 timeout、transport、429、5xx、其他
+4xx、非法 JSON 和非法协议，并只将前四类标记为可重试；真正的重试预算由上层实验控制。
+
+```powershell
+python -m pytest tests/test_openai_compatible_provider.py -k todo_13a
+python -m pytest tests/test_openai_compatible_provider.py -k todo_13b
+python -m pytest tests/test_openai_compatible_provider.py -k todo_13c
+python -m pytest tests/test_openai_compatible_provider.py -k todo_13d
+python -m pytest tests/test_openai_compatible_provider.py
+```
+
+完成后，人应能解释：为什么 Provider 只能报告“可重试”，而不能自行再次发送请求？
+为什么兼容扩展字段可以忽略，但会被 Kaiji 消费的动作字段不能依赖隐式类型转换？
+
+#### TODO 14：Runner、Scorer 与 SQLite
+
+##### 这是什么，为什么需要它
+
+TODO14 把一次真实 Runtime 运行封装成可评分的 Episode，并把 Runner、确定性 Scorer 和
+官方 SQLite Checkpointer 的生命周期接起来。输入是固定 Case、Provider/Executor 工厂
+和运行配置；输出是保存未经裁剪的 `RunResult`、模型调用元数据、评分结果以及可跨新连接
+恢复的 Checkpoint。Runner 不能用自己的 `task_success` 自报成功，Scorer 必须从动作、
+参数、回答、停止原因和成功证据重新计算。
+
+本课必须为每个 case 隔离 Provider、Registry 和故障状态；`repeat_index` 只能是真正的
+非负 `int`；每个 Episode 有唯一 `run_id`，并保留墙钟延迟。`max_steps` 和 duplicate
+guard 来自 Case/Harness 契约，不能被 Runner 偷换成无限循环或隐式默认值。
+
+`required_answer_facts` 只做确定性的字面量检查：回答和事实分别经过 NFKC、大小写折叠
+和连续空白折叠后，事实必须作为连续片段出现；事实两端若为 ASCII 字母、数字或下划线，
+不能与回答中的同类 ASCII 字符相邻，所以 `90` 不匹配 `190`，CJK 字符不参与该边界。
+它不做语义蕴含、否定识别、同义词、翻译或数值等价判断；空白事实和重复事实在 Case
+构造时拒绝。
+
+`selected_tool` 表示模型第一次选择的工具，即使参数在 handler 前被拒也应记录；
+`tool_calls` 只表示实际进入 handler 的执行尝试数，因此 `selected_tool` 非空而
+`tool_calls=0` 并不矛盾。它不是 Message 数，也不是模型 action 数。`retry_recovered`
+在 Native 中只观察同一工具调用内 `ToolResult.attempts` 体现的 Executor retry；LangGraph
+的 query rewrite 读取自己的 `retry_count`/`step_count`；Provider transport retry
+属于传输可靠性，不计入该业务恢复指标。
+
+聚合前必须校验 case ID、observation ID、`run_id` 唯一，并按 ID 完全对齐；输入顺序不
+承担身份语义。缺失 observation 不能缩小分母，适用指标为 `None` 时按既定失败口径处理，
+没有适用项时报告 `0.0`。Tool Success、Citation Precision/Recall、Steps、Token、延迟、
+停止原因和失败分布都必须使用文档规定的固定分母与 nearest-rank P50/P95。
+
+SQLite 部分只实现官方同步 Saver 的正确生命周期：创建父目录、上下文退出关闭连接、
+关闭第一个 Graph/连接后仍能由新 Graph/连接按同一 `thread_id` 恢复，并拒绝旧 Schema、
+非真正 Python `bool` 审批值和跨线程状态泄漏。它不做分布式 Checkpoint 或并发写入。
+
+练习按依赖顺序实现：**14a 隔离 Runtime Episode → 14b 单条确定性评分 → 14c 固定分母
+聚合 → 14d 官方 SQLite Checkpointer**。
+
+```powershell
+python -m pytest tests/test_eval_runner.py -k todo_14a
+python -m pytest tests/test_eval_scorer.py -k todo_14b
+python -m pytest tests/test_eval_scorer.py -k todo_14c
+python -m pytest tests/test_sqlite_checkpoint_resume.py -k todo_14d
+python -m pytest tests/test_eval_runner.py tests/test_eval_scorer.py tests/test_sqlite_checkpoint_resume.py
+```
+
+完成后，人应能解释：为什么 Runner 的成功声明不能替代 Scorer？为什么一次参数预校验
+失败可以留下工具选择，却不能增加 `tool_calls`？为什么 Provider 第一次网络失败不能
+单独让 Episode 通过恢复评分？
+
+#### TODO 15：Reliability Experiment
+
+##### 这是什么，为什么需要它
+
+TODO15 将固定数据、故障注入、Harness、Checkpoint 恢复和报告产物组织成一次可复现的
+实验。输入是冻结的数据集、配置、Provider、重复次数和请求预算；输出是带 Manifest、
+Episode JSONL、报告、坏案例和恢复账本的实验目录。L3 不预先规定内部类和辅助函数，
+但必须保留状态不变量、故障边界和可审计产物。
+
+四个 Harness 只能切换一次有界 retry 和 duplicate guard，其他 Schema、Prompt、Provider、
+数据、温度、最大步骤和重复次数必须相同：
+
+| Harness | Retry | Duplicate guard |
+|---|---:|---:|
+| `bounded_baseline` | 关 | 关 |
+| `no_retry` | 关 | 开 |
+| `no_duplicate_guard` | 开 | 关 |
+| `full_kaiji` | 开 | 开 |
+
+练习按依赖顺序实现：**15a 受控 Harness → 15b 实验矩阵与产物 → 15c Harness Ablation →
+15d 可恢复 Formal**。
+
+- 15a 必须保持所有实验有界，只允许切换上述两个机制。
+- 15b 必须执行完整 `case × repeat` 矩阵，冻结数据/配置 hash，写出
+  `episodes.jsonl`、`report.json`、`report.md` 和 `bad_cases.json`；已有实验目录不得覆盖。
+  普通 Experiment 失败时不生成可被误读为正式成绩的 `incomplete` 报告。
+- 15c 必须在相同输入下比较四组成功率、恢复率、Steps 和延迟，并解释 retry、重复调用
+  保护及正常路径开销分别改变了什么。
+- 15d 每条 Episode 立即追加到 flush/fsync 的 hash-chain JSONL；恢复以
+  `(case_id, repeat_index)` 为唯一坐标，只能跳过已完成坐标。每次真实请求先记
+  `started`，响应后记 Token；未决请求必须阻断自动恢复。完整报告要求
+  `requests_started == responses_finished`，部分报告不得聚合；hash 链只能检测未被重算
+  的损坏，不能证明真实性或作者身份。
+
+普通练习最后运行：
+
+```powershell
+python -m pytest tests/test_harnesses.py -k todo_15a
+python -m pytest tests/test_experiment.py -k todo_15b
+python -m pytest tests/test_experiment.py -k todo_15c
+python -m pytest tests/test_formal_runner.py -k todo_15d
+python -m pytest tests/test_experiment.py tests/test_harnesses.py tests/test_formal_runner.py
+python -m kaiji.experiment --provider scripted --suite smoke
+python -m kaiji.experiment --provider scripted --suite reliability
+```
+
+真实 DeepSeek Formal 与 Azusa Live 不属于普通练习回归。只有人在完成全部离线题后，另行
+明确凭据、请求、费用和数据发送授权，才可以运行它们；Scripted/Mock 的成绩只能证明
+数据、动作、恢复和评分管线自洽，不能表述为真实模型或开放域 Benchmark 成绩。
 
 ## 6. 最终验收
 
@@ -877,11 +1099,22 @@ python -m kaiji.course_demo
 python -m kaiji.eval_demo
 ```
 
+第二批 Reliability Eval 的离线验收：
+
+```powershell
+Set-Location F:\Repositories\Kaiji
+python -m pytest tests/test_openai_compatible_provider.py
+python -m pytest tests/test_eval_runner.py tests/test_eval_scorer.py tests/test_sqlite_checkpoint_resume.py
+python -m pytest tests/test_harnesses.py tests/test_experiment.py tests/test_formal_runner.py
+python -m kaiji.experiment --provider scripted --suite smoke
+python -m kaiji.experiment --provider scripted --suite reliability
+```
+
 Azusa 练习分支：
 
 ```powershell
 Set-Location F:\Repositories\Azusa
-git switch main
+git switch develop
 Set-Location rag
 python -m pytest tests/test_kaiji_gateway.py
 python run_kaiji_gateway.py --port 38117 --embedding-path tests/fixtures/kaiji_gateway_embedding.jsonl
@@ -906,15 +1139,78 @@ python -m pytest -q -rs tests/test_azusa_live_integration.py
 6. Kaiji 为什么只依赖 AzusaAdapter？
 7. 失败工具结果为什么不能进入引用？
 8. Eval 中各指标的分母是什么？
+9. Provider 为什么不能隐藏网络重试，实验账本又为什么必须记录每次请求？
+10. Runner、Scorer、Checkpoint 和 Formal ledger 分别负责什么，哪些状态不能跨 case 或跨线程泄漏？
+11. 为什么 Scripted/Mock Formal 的成绩不能表述为真实模型成绩？
 
 ## 7. 下钻资料
 
 - 快速命令索引：`docs/curriculum.md`
 - 架构与仓库边界：`docs/architecture.md`
 - 原生、LangChain、LangGraph 对照：`docs/framework-comparison.md`
-- Azusa 网关作业（切到 `main` 或 `solution/azusa-v2`
+- Azusa 网关作业（切到 `develop` 或 `solution`
   后可见）：`F:\Repositories\Azusa\rag\docs\kaiji_gateway_assignment.md`
 - Azusa 主线对接说明：`F:\Repositories\Azusa\docs\kaiji_integration.md`
+- TODO13—15 Reliability Eval L1/L2/L3：`docs/reliability-course-l1-l3.md`
+- Reliability 课程答案绿灯/练习红灯记录：`docs/reliability-course-validation.md`
+- Reliability Eval 固定契约：`docs/reliability-eval-contract.md`
+- 强制要求到直接测试追踪：`docs/reliability-eval-traceability.md`
 
 学习时以本文件为主线；需要复制命令时看 curriculum，需要理解边界时看 architecture，
 需要比较框架时看 framework-comparison。
+
+
+## 8. 一点笔记
+
+### dump: 倾倒, 转储, 倾泻而出.
+
+下面是Pydantic模型的用法:
+model_dump()  返回 Python字典. 字典的值可能还是枚举对象, 或者其他合法的字典值.
+model_dump(mode="json") 返回 JSON兼容的Python字典. 字典的值已经被转换为JSON可以表示的类型.
+model_dump_json()  返回JSON字符串, 类型是str.
+model_dump(mode="json") 和 model_dump_json()都不是严格有限JSON校验, 可能把NaN序列化为null. 如果需要严格验证, 应该使用 json.dumps(..., allow_nan=False)
+
+下面是json库的用法:
+json.loads(str)：JSON 字符串 → Python 对象
+json.dumps(obj)：Python 对象 → JSON 字符串
+json.load(file)：JSON 文件 → Python 对象
+json.dump(obj, file)：Python 对象 → JSON 文件
+
+json.dump(data, file) 把JSON内容直接写入已经打开的文件. 这里的对象指的是"可以被转换成JSON的Python对象". 在Python中, dict, list, str等几乎都是对象.
+常见用法如下:
+```
+with open("data.json", "w", encoding="utf-8") as file:
+    json.dump(data, file)
+```
+json.dumps(Python对象)  dumps的-s表示string. json.dumps()接收Python对象, 返回JSON字符串, 类型是str.  
+json.dumps(Python对象, allow_nan=False) 明确禁止 NaN, Infinity 和 -Infinity
+
+下面是组合用法:
+record = TraceRecord(...)
+json.dumps(record) 是不可行的, 因为record是pydantic模型, 是自定义对象.
+json.dumps(record.model_dump(mode="json")) 可行
+record.model_dump_json() 可行.
+
+### validate:
+validate是 Pydantic 的用法. 用来: 检查外部输入, 转换成符合模型定义的Python对象.
+PydanticItem.model_validate(data)  把Python字典或Python对象转换成PydanticItem. 这个过程中会完成: 字段类型校验,字符串转换成枚举, 嵌套模型转换, Field约束检查, 和自定义model_validator的执行.
+PydanticItem.model_validate_json(data)  输入的是JSON字符串, 转成PydanticItem.
+PydanticItem.model_validate_strings(data)  输入的是一个字典, 字典中所有的值都是字符串. model_validate_strings会把这些字符串转换成目标类型.
+
+field_validator 只关注指定字段名(可以是一个或者多个字段), 如@field_validator("字段名", "另一个字段名"), 但是每次调用只处理当前的字段值. 通俗的说, 对于这些指定的字段一个一个去校验, 不关注这些字段之间的关系.
+
+model_validator 检查整个模型, 可以同时检查多个字段之间的关系.可以指定模型生成前/后校验, 如@model_validator(mode="after")
+
+### 文件
+一个Path对象, 形如 PathItem = Path("data/traces.jsonl")
+PathItem的父目录是 PathItem.parent
+若父目录不存在, 可以PathItem.parent.mkdir(parents=True, exist_ok=True)
+PathItem.exists() 判存在
+PathItem.stat().st_size() 判大小, 推断是不是空文件
+with self._path.open("a", encoding="utf-8") as file: "a" 是 append，追加模式. "w"是擦除重写.
+    ...with语句会自动完成close
+    file.write("要往里写入的内容")
+
+with self._path.open("rb") as file: "rb"是按二进制只读方式打开.
+    file.seek(-1, 2) # 以文件末尾（2 = os.SEEK_END）为基准，向后倒退 1 个字节（-1）, 把文件指针放在这里.
+    last_byte = file.read(1) # 读取文件指针开始的一个字节

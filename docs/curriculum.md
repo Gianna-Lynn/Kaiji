@@ -1,18 +1,10 @@
 # Kaiji 完整教学路线
 
-标准答案分支：`solution/kaiji-v0`。
+标准答案分支：`solution`。
 
 ## 0. 环境和总验收
 
-```powershell
-$py = 'D:\Chuo_Data\conda_envs\ChuoEnv\python.exe'
-& $py -m pytest
-& $py -m kaiji.course_demo
-& $py -m kaiji.eval_demo
-```
-
-未设置 `AZUSA_GATEWAY_URL` 时，前述离线验收不需要 API key、GPU 或正在运行的 Azusa；
-live test 会明确跳过。若环境变量仍然存在，则全量测试会真实连接对应网关。
+日常离线验证使用 [Demo 指南](demo-guide.md) 的来源检查、唯一临时目录和环境恢复命令；真实 HTTP fixture 单独运行。下方逐课 pytest 命令是目标选择示例，代理执行仍必须显式提供独立 basetemp。
 
 本页是课程路线和运行命令的索引，不代替教学契约。每个 TODO 的字段含义、状态流转、
 失败边界、非目标和测试矩阵都写在 `LEARNING.md`；实现前必须先读对应章节。仅凭测试
@@ -24,33 +16,45 @@ live test 会明确跳过。若环境变量仍然存在，则全量测试会真�
 
 ```powershell
 Set-Location F:\Repositories\Azusa
-git switch solution/azusa-v2
+git switch solution
 Set-Location rag
 & $py run_kaiji_gateway.py --port 38117 --embedding-path tests/fixtures/kaiji_gateway_embedding.jsonl
 ```
 
-人完成 Azusa 练习时，把上面的分支换成 `main`；只有 `main` 上对应 TODO 测试通过并
-实际完成联调，才算人完成 TODO 12。`solution/azusa-v2` 只用于先验证标准答案闭环。
+人完成 Azusa 练习时，把上面的分支换成 `develop`；只有 `develop` 上对应 TODO 测试通过并
+实际完成联调，才算人完成 TODO 12。Azusa 侧对应验收编号为 `AZUSA-GW-05`，其前置
+服务端实现为 `AZUSA-GW-01`—`04`。`solution` 只用于先验证标准答案闭环。
 
-再找到或创建 Kaiji 正确答案的独立 worktree；不要为此覆盖带有人改动的 `main`：
+再找到或创建 Kaiji 正确答案的独立 worktree；不要为此覆盖带有人改动的 `develop`：
 
 ```powershell
 Set-Location F:\Repositories\Kaiji
 git worktree list
-# 若已列出 solution/kaiji-v0，进入它上方显示的 worktree 路径。
-# 若尚未列出，执行下面两行创建并进入示例路径：
-git worktree add F:\Repositories\Kaiji-solution solution/kaiji-v0
-Set-Location F:\Repositories\Kaiji-solution
-$env:PYTHONPATH = (Join-Path (Get-Location) 'src')
-& $py -c "import kaiji; print(kaiji.__file__)"
-$env:AZUSA_GATEWAY_URL = 'http://127.0.0.1:38117'
-& $py -m pytest -q tests/test_azusa_live_integration.py
+# 进入已列出的 solution 工作区；不要覆盖 develop 或重装共享 editable 项目。
+Set-Location F:\Repositories\Kaiji\.worktrees\kaiji-solution
+$hadPythonPath = Test-Path Env:PYTHONPATH
+$previousPythonPath = $env:PYTHONPATH
+$hadGatewayUrl = Test-Path Env:AZUSA_GATEWAY_URL
+$previousGatewayUrl = $env:AZUSA_GATEWAY_URL
+$testRoot = '.cache/codex-pytest-' + [guid]::NewGuid().ToString('N')
+try {
+    $env:PYTHONPATH = (Resolve-Path src).Path
+    if ($hadPythonPath -and $previousPythonPath) { $env:PYTHONPATH += [IO.Path]::PathSeparator + $previousPythonPath }
+    & $py -B -c 'import pathlib,kaiji; print(kaiji.__file__); assert pathlib.Path(kaiji.__file__).resolve().is_relative_to((pathlib.Path.cwd()/"src").resolve())'
+    if ($LASTEXITCODE) { throw '源码来源错误' }
+    $env:AZUSA_GATEWAY_URL = 'http://127.0.0.1:38117'
+    & $py -B -m pytest -q tests/test_azusa_live_integration.py -o addopts= --basetemp=$testRoot -o "cache_dir=$testRoot/cache"
+    if ($LASTEXITCODE) { throw 'HTTP fixture 验收失败' }
+} finally {
+    if ($hadPythonPath) { $env:PYTHONPATH = $previousPythonPath } else { Remove-Item Env:PYTHONPATH -ErrorAction SilentlyContinue }
+    if ($hadGatewayUrl) { $env:AZUSA_GATEWAY_URL = $previousGatewayUrl } else { Remove-Item Env:AZUSA_GATEWAY_URL -ErrorAction SilentlyContinue }
+}
 ```
 
 同一个 Conda 环境的 editable install 只能指向一个工作树。pytest 会按本项目配置优先加载
-当前 `src`，但 `python -m kaiji.course_demo` 等普通模块命令可能仍导入此前安装的 main。
+当前 `src`，但 `python -m kaiji.course_demo` 等普通模块命令可能仍导入此前安装的 develop。
 因此在答案 worktree 验收期间临时设置上面的 `PYTHONPATH`，并用打印出的 `kaiji.__file__`
-确认路径确实位于该 worktree；结束后执行 `Remove-Item Env:PYTHONPATH`。这不是代码依赖，
+确认路径确实位于该 worktree；结束后恢复设置前的 `PYTHONPATH`；原来不存在时才删除临时变量。这不是代码依赖，
 而是多个工作树共用一个 Python 环境时的来源隔离。
 
 该回归使用 Azusa 教学分支受 Git 跟踪的最小 Embedding fixture 和真实 BM25 检索，随后按
@@ -106,7 +110,17 @@ Checkpoint、Interrupt、`Command(resume=...)` 和所有终止路径。这里的
 计算；不得用全为满分的样例掩盖错误公式。当前 `reference_observation()` 是聚合器金标，
 不是 20 条真实 Agent 行为回归；真实 runner 必须另行提供观测。
 
-## 7. TODO 与验收入口
+## 7. Reliability Eval
+
+代码：`providers/openai_compatible.py`、`eval_runner.py`、`eval_scorer.py`、
+`experiment.py`、`formal_runner.py` 和相关测试。
+
+这是 TODO 1—12 之后的第二批课程，按 L1 Provider、L2 Runner/Scorer/SQLite、L3
+Reliability Experiment 逐步撤除工程脚手架。详细字段契约、非目标、失败边界和直接测试
+追踪见 `docs/reliability-course-l1-l3.md`、`docs/reliability-eval-contract.md` 和
+`docs/reliability-eval-traceability.md`；主学习顺序和完成定义见 `LEARNING.md`。
+
+## 8. TODO 与验收入口
 
 每完成一行，该行测试应能独立转绿；最后再执行全量测试与两个 Demo。
 
@@ -124,3 +138,10 @@ Checkpoint、Interrupt、`Command(resume=...)` 和所有终止路径。这里的
 | 10 | JSONL Trace、唯一 run_id 与稳定 replay | `pytest tests/test_tracing.py` |
 | 11 | Eval 对齐、混合样例与指标公式 | `pytest tests/test_evaluation.py` |
 | 12 | 真实 Azusa 跨仓库闭环 | `pytest -q -rs tests/test_azusa_live_integration.py` |
+| 13a—13d | OpenAI-compatible Provider 协议边界 | `pytest tests/test_openai_compatible_provider.py` |
+| 14a | 隔离 Runtime Episode | `pytest tests/test_eval_runner.py -k todo_14a` |
+| 14b—14c | 确定性评分与固定分母聚合 | `pytest tests/test_eval_scorer.py` |
+| 14d | 官方 SQLite Checkpointer 恢复 | `pytest tests/test_sqlite_checkpoint_resume.py` |
+| 15a | 受控 Reliability Harness | `pytest tests/test_harnesses.py -k todo_15a` |
+| 15b—15c | 实验矩阵、产物与 Ablation | `pytest tests/test_experiment.py` |
+| 15d | 可恢复 Formal 实验 | `pytest tests/test_formal_runner.py` |
