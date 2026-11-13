@@ -35,7 +35,7 @@ Observability
 
 ## 边界
 
-Kaiji 不导入 `F:\Repositories\Azusa` 的 Python 或 Rust 内部实现。当前 Azusa Rust 服务
+Kaiji 不导入 Azusa 仓库的 Python 或 Rust 内部实现。当前 Azusa Rust 服务
 只提供向量级 `POST /search` 和 `GET /record/{id}`；因此兼容 adapter 需要注入 query
 encoder 和 chunk text resolver，并且只支持 `hnsw`。
 

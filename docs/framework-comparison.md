@@ -19,7 +19,7 @@
 ## 本课程的对照边界
 
 - `to_langchain_messages()` 只比较角色、正文和工具结果的对应关系，是有损映射；Kaiji
-  当前 `Message` 没有完整表达 LangChain 原生 `AIMessage.tool_calls`，因此不承诺往返还原。
+  `Message` 表达单个工具调用；转换函数没有重建完整 LangChain 原生 `AIMessage.tool_calls`，因此不承诺往返还原。
 - LangChain 的 `StructuredTool` 负责输入 schema，但 Adapter 返回值仍须由 Kaiji 的
   Pydantic 输出模型校验；Callback 只观察开始、成功和失败，不替代错误处理。
 - LangGraph 的 `AgentState` 是一次运行的显式工作数据：`step_count` 是搜索执行次数，

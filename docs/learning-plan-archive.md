@@ -7,7 +7,7 @@ Kaiji (かいじ) 是 JR 东日本中央本线(特急)甲斐路号列车的英�
 
 Kaiji 是 Azusa 之上的独立 Agent 应用工程项目。它不重新实现 HNSW 或 RAG，而是通过工具适配器调用 Azusa，学习并实现可靠的单 Agent Runtime。
 
-Kaiji 的核心对象是 Message、Tool、AgentState、Workflow、Checkpoint、Trace 和 Eval Case。当前课程主线已接到 TODO 15：`main` 保留练习代码，`solution/kaiji-v0` 保存完整参考实现与 Reliability Eval 答案边界，验证记录见 `docs/`。
+Kaiji 的核心对象是 Message、Tool、AgentState、Workflow、Checkpoint、Trace 和 Eval Case。归档时课程主线接到 TODO 15，当时 main 承担练习、solution/kaiji-v0 保存参考答案；当前改为 main 展示、develop 学习开发、solution 参考实现，见 [分支说明](branch-migration.md)。
 
 ## 项目关系
 

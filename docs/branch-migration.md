@@ -1,6 +1,6 @@
-# 本地三分支迁移与验收
+# 三分支迁移与远端同步
 
-日期：2026-11-13。本次不推送、不删除远端分支、不改写共享 Python 安装。
+更新日期：2026-11-13。本地迁移和远端同步均已完成，本地与 origin 只保留 main、develop、solution，默认分支为 main。共享 Python 安装未改写。
 
 ## 当前职责与目录
 
@@ -27,7 +27,7 @@ main 从人的原 main 基底 eb5a53e 建立，保留其实现与测试。develo
 
 迁移前人的 main：611 项离线测试通过；三个 Demo、SQLite 新连接恢复、120+60 离线 Preflight、公开包和本机 HTTP 通过；TODO12 fixture 单独 1 passed。HTTP 使用 Azusa develop 58c081c，临时回环 NO_PROXY 后通过，真实模型请求为 0。
 
-迁移后必须对 main、develop、solution 分别固定当前 src 并运行离线测试；main/develop 复验交付 Demo、Formal 和公开包。solution 还需验证保全的 Chat/Web、service、span 投影与新同步的 P1。
+迁移后已分别固定三个工作区 src：main/develop 各 611 passed，solution 657 passed；三个 Demo、交付核验、公开包、HTTP 与 TODO12 fixture 均通过。完整范围见 [验收记录](migration-acceptance.md)。
 
 本轮是展示交付与本地迁移验收，不替代 TODO8—12 新版完整独立审计、逐子任务学习路径验收或真实模型测试。历史报告保持原提交与旧分支名，不回填新来源。
 
@@ -35,8 +35,12 @@ main 从人的原 main 基底 eb5a53e 建立，保留其实现与测试。develo
 
 develop 保留人的原始源码和测试修改、VS Code 设置、AGENTS 新增规则与重新捡起Kaiji.md，保持未提交。solution 原有 Chat/Web 改动作为参考工程保全并提交，原字节仍可从备份还原；测试与契约兼容所需调整单独记录。
 
-旧 portfolio 的全部文件及历史先备份，独有服务能力转入 solution；确认验收和保全清单后才删除本地旧分支。旧备份分支历史已经被 develop 包含。最终只保留三个本地分支；origin 下旧远端跟踪引用仍可见，因为本轮没有推送或远端删除。
+旧 portfolio 的全部文件及历史已备份，独有服务能力已转入 solution；本地旧备份分支和远端旧分支均已在保全核对后清理。当前本地与 origin 都只保留 main、develop、solution，临时远端保全分支也已删除。
 
 ## 本次兼容修复
 
 solution 保留多轮聊天及最终 assistant 消息；为复核旧产物，RunResult 同时接受旧单轮 answer-only 外形，且有普通 assistant 回答时仍严格要求唯一、位于末尾并等于 answer。同步人的预期失败评分规则和引用零分母报告格式，未改写冻结证据包。main/develop 的消息契约不变。原 Chat/Web 文档完整保留于 solution 的 docs/reference-chat-web.md。
+
+## 远端同步记录
+
+2026-11-13 已推送 main 7f0cb11、develop 25ee55d、solution 66b50fa，Git 与 GitHub API 双重核对通过；旧 solution/kaiji-v0 和 portfolio/kaiji-v0 已清理。上述是同步时点提交，分支后续可正常前进。推送未创建新提交，develop 工作文件与暂存区均保持原状。备份包含在本机 .cache/remote-sync-7f1beee91a3f41eba3feee10f1d06d3d。

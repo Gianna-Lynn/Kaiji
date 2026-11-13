@@ -1,6 +1,6 @@
 # 三分支迁移验收记录
 
-日期：2026-11-13；仅本地操作，未推送或删除任何远端分支。
+日期：2026-11-13。下表记录本地迁移验收；随后三个已验收分支已推送到远端，旧分支已在保全核对后清理。
 
 ## 验收结果
 
@@ -26,6 +26,6 @@ solution 原有 Chat/Web 新源码、静态文件和对应测试逐字节保留�
 
 备份位于本机 `.cache/branch-migration-20261113`，包含 all-refs.bundle、三个工作区 zip、manifest、补丁和索引；bundle verify 和 zip 全文件 SHA256 均通过。最终逐项保全核对及报告路径见其中 final-validation.json，原始测试日志和失败诊断也保留。
 
-旧 portfolio 历史已连接到 solution，独有服务、观测、部署和历史展示材料已保全；两个旧备份分支历史已在 develop。完成上述验证后才清理本地旧分支，保留 main、develop、solution。远端旧引用仍保留，因为本轮禁止推送。
+旧 portfolio 历史已连接到 solution，独有服务、观测、部署和历史展示材料已保全；两个旧备份分支历史已在 develop。完成上述验证后才清理本地旧分支，保留 main、develop、solution。后续远端同步已完成，GitHub 默认分支仍为 main，本地与远端均只保留 main、develop、solution。
 
 本次只验收展示范围与迁移保全；不替代完整教学独立审计、逐子 TODO 学习路径验收、真实模型复验、Docker 重建或远端 CI。
