@@ -91,3 +91,12 @@ Kaiji 的核心对象是 Message、Tool、AgentState、Workflow、Checkpoint、T
 ## 明确非目标
 
 本阶段不做多 Agent、复杂长期记忆、任意代码执行、浏览器自动化、Kubernetes、分布式 Runtime、vLLM 内核或大型 MCP 生态。FastAPI 与 Docker Compose 属于收口加分项，不得阻塞核心能力。
+
+## 当前分支职责（2026-11-13）
+
+- `main`：人的已实现能力与展示验收；不合入尚在施工的 Chat/Web 或服务化能力。
+- `develop`：人的学习开发主线，主目录与共享 editable 安装保持原路径；已有实现不得重新挖空，人的未提交改动留在这里。
+- `solution`：参考实现、服务化扩展与 Chat/Web 工作；不得用答案覆盖人的实现。
+- 历史记录中的旧分支名只表示当时来源；当前导航使用上述三个名称。
+
+共享 ChuoEnv 的 editable 绑定固定主目录；验证其他 worktree 只临时指定 src，不重装项目。旧规则里的 main 学习工作区称谓指当前 develop。

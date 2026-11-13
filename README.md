@@ -1,70 +1,41 @@
 # Kaiji
 
-Kaiji 是一个面向可靠工具调用的 Python 单 Agent Runtime 实验项目，围绕参数校验、有界重试、状态恢复、Trace 和评测组织执行流程。
-它通过 HTTP/Tool Adapter 调用 [Azusa](https://github.com/Gianna-Lynn/Azusa) 的检索与证据接口。
+Kaiji 是面向可靠工具调用的 Python 单 Agent Runtime 实验项目。它显式管理工具输入与输出校验、有界重试、循环停止、状态恢复、Trace 与可复核评测，通过 HTTP Adapter 使用 [Azusa](https://github.com/Gianna-Lynn/Azusa) 的检索与证据能力。
 
-**先看项目展示：[`portfolio/kaiji-v0`](https://github.com/Gianna-Lynn/Kaiji/tree/portfolio/kaiji-v0)**，集中查看架构、Demo、评测与失败分析。
-本页的最小体验使用 `main`；展示分支的服务化演示与实验记录见其运行指南。
-交付核心基底固定为展示提交 `54bdd1d83d0e678f7b55751555ea633819d9d5c8`；
-当前离线复验、P0-C 阶段补丁及三类恢复边界见[交付基线](docs/delivery-baseline.md)。
-P1 的规则问答 HTTP 演示与无需密钥的精简复核包见[P1 验证记录](docs/p1-validation.md)。
-
-## 项目重点
-
-- **工具执行边界**：Pydantic/JSON Schema 契约、工具输入与输出校验、超时、有界重试、重复调用保护和明确停止原因。
-- **状态与恢复**：区分 Message、AgentState、Checkpoint 和 Memory，并对照 LangChain/LangGraph 的消息、工具与状态工作流。
-- **证据与评测**：成功工具结果、回答引用和 Trace 分别保留；通过受控故障与固定样例观察行为、恢复和评分边界。
-
-## 项目关系
-
-```text
-Question -> AgentRuntime -> ToolRegistry / ToolExecutor
-                |                    |
-                |             Azusa HTTP Adapter
-                |                    |
-         State / Trace / Eval   search -> chunk evidence
-```
-
-Azusa 负责 HNSW 与 RAG；Kaiji 通过 `search_azusa(query, k, mode)` 和 `get_chunk_by_id(chunk_id)` 使用检索与证据能力，
-不导入 Azusa 的内部实现。[架构说明](docs/architecture.md)与[框架职责对照](docs/framework-comparison.md)记录接口和取舍。
+`main` 展示人的已实现能力；`develop` 保留学习开发与在途改动；`solution` 保存参考实现和扩展能力。当前只完成本地迁移，远端尚未更新，旧远端分支不代表本地分工。
 
 ## 最小体验
 
-需要 Git 和 Python 3.11+。下面获取 `main` 并运行离线工具演示：
+在独立环境安装 Python 3.11+ 与本分支依赖后运行：
 
 ```powershell
-git clone --branch main https://github.com/Gianna-Lynn/Kaiji.git
-cd Kaiji
-python -m pip install -e '.[dev]'
+python -m pip install '.[dev]'
 python -m kaiji.demo
+python -m kaiji.course_demo
+python -m kaiji.eval_demo
 ```
 
-该演示使用预设决策替身调用折扣工具，输出 JSON；应看到 `answer` 为 `The final price is 90.`、
-`stop_reason` 为 `completed`，并保留工具调用与 Trace。无需 API Key、GPU 或运行中的 Azusa。
-它只展示原生 Runtime 小闭环，不代表真实模型的自主工具选择成绩。
+已有共享 ChuoEnv 不要重新安装其他工作区；固定源码来源的命令见 [Demo 指南](docs/demo-guide.md)。折扣 Demo 应返回 `The final price is 90.`、`completed`、2 步和 1 次工具执行。工具真实执行，但动作与答案由 Scripted Provider 预设，不能作为模型自主成绩。
 
-更多场景的安装、演示和真实调用条件见
-[Demo 指南](https://github.com/Gianna-Lynn/Kaiji/blob/portfolio/kaiji-v0/docs/portfolio/demo-guide.md)。
-该指南中的命令应在其对应分支运行。
+## 展示范围
 
-## 深入阅读
+| 能力 | 已有路径 | 结论边界 |
+|---|---|---|
+| 原生工具循环 | Registry、Executor、Runtime、Message 与 Trace | 一次 run 有界执行，不自动恢复持久化快照 |
+| 框架对照 | LangChain Tool/Runnable、LangGraph State/Interrupt | 框架不替代工具权限、结果校验和业务失败策略 |
+| 暂停与恢复 | 严格 bool 审批、SQLite 新连接恢复 | 只模拟副作用；JSON Store 与图 Checkpointer 独立 |
+| Azusa 闭环 | BM25 search→实际 ID get→正文校验→引用 | 项目笔记、规则决策和真实本机 HTTP，不是自主模型检索成绩 |
+| 可靠性实验 | Episode、Scorer、Harness、Formal、公开复核包 | 固定数据与故障，实验矩阵恢复不等于业务 exactly-once |
 
-- [展示分支架构与状态图](https://github.com/Gianna-Lynn/Kaiji/blob/portfolio/kaiji-v0/docs/portfolio/architecture.md)。
-- [评测与失败案例](https://github.com/Gianna-Lynn/Kaiji/blob/portfolio/kaiji-v0/docs/portfolio/evaluation-and-bad-cases.md)：区分协议测试、受控故障实验、真实模型行为和 Azusa Live。
-- [主张证据索引](https://github.com/Gianna-Lynn/Kaiji/blob/portfolio/kaiji-v0/docs/portfolio/evidence-index.md)：对应代码、测试与历史验证范围。
+main 保留人的源码实现与已完成的课程能力；编号 TODO 是课程定位，不代表留有未实现占位。FastAPI 服务、span 投影、Docker/CI 与 Chat/Web 属于 solution 扩展，不列入 main 交付主张。
 
-## 分支与结论边界
+## 阅读与复核
 
-| 分支 | 用途 |
-|---|---|
-| `main` | 开发主线；各模块实现进度与验收记录见开发与学习文档 |
-| [`solution/kaiji-v0`](https://github.com/Gianna-Lynn/Kaiji/tree/solution/kaiji-v0) | 完整参考实现与历史审计基线 |
-| [`portfolio/kaiji-v0`](https://github.com/Gianna-Lynn/Kaiji/tree/portfolio/kaiji-v0) | 求职展示、证据组织及服务化演示 |
+- [架构与职责](docs/architecture.md)、[框架对照](docs/framework-comparison.md)。
+- [Demo 指南](docs/demo-guide.md)、[证据索引与失败边界](docs/evidence-index.md)。
+- [本地分支迁移与验收](docs/branch-migration.md)。
+- 学习导航：[LEARNING.md](LEARNING.md)、[课程路线](docs/curriculum.md)。日常学习在 develop；不要把答案整体覆盖到人的实现。
 
-历史测试与模型成绩仅适用于报告中的提交、数据和环境。`eval_demo` 使用合成金标观测演示聚合器，不能作为 Agent 成绩。
-受控实验结果不作为生产 SLA 或开放域效果保证。
+历史模型数字和验证报告只归属于各自提交、数据与环境。`eval_demo` 是合成观测聚合；hash 链不证明来源真实性；线程超时不终止已开始的 handler。完整教学独立审计、真实模型复验与生产部署不由本轮展示验收替代。
 
-Kaiji（かいじ，甲斐路号）的名字来自 JR 东日本中央本线特急列车，与 Azusa（あずさ，梓号）呼应。
-
-开发与学习记录：[当前任务与契约](LEARNING.md) · [课程路线](docs/curriculum.md) ·
-[Reliability Eval 任务](docs/reliability-course-l1-l3.md) · [历史学习计划](docs/learning-plan-archive.md)。
+Kaiji（かいじ，甲斐路号）与 Azusa（あずさ，梓号）的命名呼应。

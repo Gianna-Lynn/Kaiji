@@ -43,14 +43,14 @@ encoder 和 chunk text resolver，并且只支持 `hnsw`。
 `get_chunk_by_id(chunk_id)` 被定义为稳定的 `AzusaAdapter` 协议。Azusa 的薄 HTTP
 网关进入稳定主线时，Kaiji 只替换 adapter，不修改 Runtime 或 Workflow。
 
-Azusa 的稳定双分支都保留该薄网关：`solution/azusa-v2` 是完整参考答案，
-`main` 是人的课程与 TODO 主线。两者共享同一 HTTP 契约，Kaiji 不依赖 Azusa 的内部实现。
+Azusa 的 main、develop、solution 均保留该薄网关：`solution` 是完整参考答案，
+`develop` 是人的课程与学习主线。两者共享同一 HTTP 契约，Kaiji 不依赖 Azusa 的内部实现。
 HTTP 契约不依赖固定端口。本机 Windows 排除了 `2991..3090`，因此课程使用已验证的
 `http://127.0.0.1:38117`，而不是脚本原默认值 `3010`。Kaiji 的
 `test_azusa_live_integration.py` 使用真实 BM25
 完成 `query → hits → chunk_id → 完整 chunk` 跨仓库回归；未设置
 `AZUSA_GATEWAY_URL` 时该测试跳过，不阻塞离线课程，但跳过不代表 TODO 12 已验收。
-验证参考答案时启动 `solution` 网关；人完成课程时必须让自己的 `todo` 网关通过测试，
+验证参考答案时启动 `solution` 网关；人完成课程时必须让自己的 `develop` 网关通过测试，
 并确认 live test 实际显示 `1 passed`。
 
 ## 状态与记录的职责边界

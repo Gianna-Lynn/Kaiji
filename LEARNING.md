@@ -1,5 +1,7 @@
 # Kaiji 学习驾驶台
 
+本地长期分支为 `main`、`develop`、`solution`。日常学习在 develop；编号 TODO 是课程定位，不代表当前仍未实现。展示验收与教学独立审计分别记录，见 `docs/branch-migration.md`。
+
 这份文档主要写给人。它不只是告诉你“哪些测试要通过”，还说明每一阶段为什么存在、
 你应该亲手掌握什么，以及什么时候才适合查看标准答案。
 
@@ -44,7 +46,7 @@ get_chunk_by_id(chunk_id)
 
 人需要完成：
 
-- 按 `TODO 1`—`TODO 15` 路线理解、实现与解释关键逻辑；当前 main 已有多项实现，编号不代表仍是空骨架；
+- 按 `TODO 1`—`TODO 15` 路线理解、实现与解释关键逻辑；当前 develop 已有多项实现，编号不代表仍是空骨架；
 - 每完成一课，运行对应窄测试；
 - 在看答案前，先解释自己的设计和失败边界；
 - 最后完成 Kaiji 与 Azusa 的真实跨仓库验收。
@@ -57,28 +59,30 @@ Kaiji：
 
 | 分支 | 用途 |
 |---|---|
-| `main` | 人实际写 TODO 的练习分支 |
-| `solution/kaiji-v0` | TODO 1—15 的完整答案、真实 Azusa 集成与 Reliability Eval 基线 |
-| `portfolio/kaiji-v0` | 展示交付基底；固定提交、复验与未交付能力见 `docs/delivery-baseline.md` |
+| `main` | 已验收的展示范围，保留人的实现 |
+| `develop` | 人的学习开发主线，保留在途改动 |
+| `solution` | TODO 1—15 的完整答案、真实 Azusa 集成与 Reliability Eval 基线 |
+
 
 Azusa：
 
 | 分支 | 用途 |
 |---|---|
-| `main` | 人完成语义网关与 Azusa v2 课程 TODO |
-| `solution/azusa-v2` | 可运行的完整参考答案 |
+| `main` | 对外展示，不提供过滤与 ACL 练习 |
+| `develop` | 人完成语义网关与 Azusa 课程练习 |
+| `solution` | 可运行的完整参考答案 |
 
 同一 Python 环境的 editable install 只能指向一个工作树。在 Kaiji 答案 worktree 运行
 `python -m kaiji.*` 前，应临时把该 worktree 的 `src` 放入 `PYTHONPATH`，并打印
-`kaiji.__file__` 确认没有误载 main；具体命令见 `docs/curriculum.md`。回到 main 后清除
+`kaiji.__file__` 确认没有误载 develop；具体命令见 `docs/curriculum.md`。回到 develop 后清除
 该临时变量，避免答案代码越过 TODO。这条检查尤其重要：命令成功不等于导入来源正确。
 
-日常学习始终留在 Kaiji `main`。不要为了看答案直接把 solution 分支合并进 main。
+日常学习始终留在 Kaiji `develop`。不要为了看答案直接把 solution 分支合并进 main。
 
 卡住时，先只查看一个文件的差异：
 
 ```powershell
-git diff main..solution/kaiji-v0 -- src/kaiji/tools.py
+git diff develop..solution -- src/kaiji/tools.py
 ```
 
 建议顺序：
@@ -101,14 +105,14 @@ python -m pytest tests/test_scaffold.py
 python -m kaiji.demo
 ```
 
-以下是历史初始脚手架状态，不是当前 main 的预期输出：
+以下是历史初始脚手架状态，不是当前 develop 的预期输出：
 
 - `tests/test_scaffold.py`：3 个测试通过；
 - `kaiji.demo`：可运行，但返回 `max_steps`、`steps=0`；
 - 全量测试：大量 TODO 测试失败；
 - live integration：未设置环境变量时跳过。
 
-当前 main 的 Demo 已返回折扣结果与 `completed`；当前回归与分支差异见
+当前 develop 的 Demo 已返回折扣结果与 `completed`；当前回归与分支差异见
 `docs/delivery-baseline.md`。历史初始红灯不能代替当前验收；学习仍应围绕当前课的窄测试和解释能力。
 
 ## 5. 推荐学习路线
@@ -878,8 +882,8 @@ Azusa 侧对应课程为 `AZUSA-GW-05`，其前置服务端实现为 `AZUSA-GW-0
 
 这一课跨越两个仓库。普通全量测试在未设置 `AZUSA_GATEWAY_URL` 时会 skip live test；
 因此 TODO 12 的完成条件不是“全量测试没有失败”，而是该文件明确显示 `1 passed`，不能
-是 `1 skipped`。标准答案闭环使用 Azusa 的 `solution/azusa-v2` 先验证；人真正完成
-课程时必须在自己的 `main` 上得到同样结果。两个分支都包含网关脚本，但命令仍须显式
+是 `1 skipped`。标准答案闭环使用 Azusa 的 `solution` 先验证；人真正完成
+课程时必须在自己的 `develop` 上得到同样结果。两个分支都包含网关脚本，但命令仍须显式
 切换分支，避免把答案态与课程态混淆。
 
 本机 Windows 将 `2991..3090` 列为 TCP 排除端口，默认 `3010` 会触发
@@ -890,7 +894,7 @@ Azusa 侧对应课程为 `AZUSA-GW-05`，其前置服务端实现为 `AZUSA-GW-0
 
 ```powershell
 Set-Location F:\Repositories\Azusa
-git switch main
+git switch develop
 Set-Location rag
 
 python -m pytest tests/test_kaiji_gateway.py
@@ -1110,7 +1114,7 @@ Azusa 练习分支：
 
 ```powershell
 Set-Location F:\Repositories\Azusa
-git switch main
+git switch develop
 Set-Location rag
 python -m pytest tests/test_kaiji_gateway.py
 python run_kaiji_gateway.py --port 38117 --embedding-path tests/fixtures/kaiji_gateway_embedding.jsonl
@@ -1144,7 +1148,7 @@ python -m pytest -q -rs tests/test_azusa_live_integration.py
 - 快速命令索引：`docs/curriculum.md`
 - 架构与仓库边界：`docs/architecture.md`
 - 原生、LangChain、LangGraph 对照：`docs/framework-comparison.md`
-- Azusa 网关作业（切到 `main` 或 `solution/azusa-v2`
+- Azusa 网关作业（切到 `develop` 或 `solution`
   后可见）：`F:\Repositories\Azusa\rag\docs\kaiji_gateway_assignment.md`
 - Azusa 主线对接说明：`F:\Repositories\Azusa\docs\kaiji_integration.md`
 - TODO13—15 Reliability Eval L1/L2/L3：`docs/reliability-course-l1-l3.md`
