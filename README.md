@@ -33,7 +33,7 @@ main 保留人的源码实现与已完成的课程能力；编号 TODO 是课程
 
 - [架构与职责](docs/architecture.md)、[框架对照](docs/framework-comparison.md)。
 - [Demo 指南](docs/demo-guide.md)、[证据索引与失败边界](docs/evidence-index.md)。
-- [本地分支迁移与验收](docs/branch-migration.md)。
+- [本地分支迁移](docs/branch-migration.md)、[迁移后验收结果](docs/migration-acceptance.md)。
 - 学习导航：[LEARNING.md](LEARNING.md)、[课程路线](docs/curriculum.md)。日常学习在 develop；不要把答案整体覆盖到人的实现。
 
 历史模型数字和验证报告只归属于各自提交、数据与环境。`eval_demo` 是合成观测聚合；hash 链不证明来源真实性；线程超时不终止已开始的 handler。完整教学独立审计、真实模型复验与生产部署不由本轮展示验收替代。
