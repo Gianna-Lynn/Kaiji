@@ -1,4 +1,4 @@
-> 历史记录：本文分支名、提交和测试数字属于记录当时。2026-11-13 本地已调整为 main/develop/solution，当前职责与验收见 [迁移说明](branch-migration.md)。
+> 历史记录：本文分支名、提交和测试数字属于记录当时。2026-11-13 本地与远端已统一为 main/develop/solution，当前职责与验收见 [迁移说明](branch-migration.md)。
 
 # P1 最小集成与公开复核材料
 
