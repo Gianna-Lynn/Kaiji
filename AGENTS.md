@@ -24,6 +24,16 @@ Kaiji 的核心对象是 Message、Tool、AgentState、Workflow、Checkpoint、T
 - 所有 Git commit 的提交说明必须使用中文。
 - “测试通过”只证明已覆盖断言通过；只有测试、书面契约、状态不变量和代码审查同时通过，才能宣告教学 TODO 完成。
 
+## Python 共享环境与 worktree 来源隔离
+
+- 本地共享 ChuoEnv 的 `kaiji-agent` editable 安装默认固定指向主工作区 `F:\Repositories\Kaiji`（人的 `main` 学习工作区）。验证 `solution`、`portfolio` 或其他 worktree 时，不得通过 `pip install -e .`、`pip install -e '.[dev,service]'` 或其他重装方式把该绑定改走；确需变更共享绑定时，必须先取得人针对该变更的明确授权。
+- 历史教训：2026-08-20 为 P2 动态测试在 portfolio worktree 执行 editable 安装，导致共享 ChuoEnv 的裸 `import kaiji` 长期解析到展示分支；2026-11-09 已恢复主工作区绑定。Git 工作区干净不代表 Python 环境未改变，切换目录或分支也不会自动重定向 editable 安装。
+- 验证其他 worktree 时，显式使用 `D:\Chuo_Data\conda_envs\ChuoEnv\python.exe`，并临时把目标 worktree 的绝对 `src` 路径放到源码搜索路径首位：可在独立 Python 进程入口使用 `sys.path.insert(0, ...)`，或仅为验证进程设置临时 `PYTHONPATH`。不得写入用户级或系统级环境变量。
+- 若在 PowerShell 中临时设置 `$env:PYTHONPATH`，必须先记录原变量是否存在及其原值，用 `try/finally` 包围验证；退出时恢复原值，原先不存在则删除临时变量。不得无条件删除原有设置，也不得覆盖掉原有搜索路径后不恢复。
+- 每轮验证必须在同一解释器、同一源码路径设置下检查 `kaiji.__file__`，确认位于目标 worktree 的 `src\kaiji` 后才运行测试、Demo 或脚本。pytest 的 `pythonpath = ["src"]` 不能证明普通 Python 命令或 IDE 调试器也使用相同源码。
+- 补依赖时，不得顺带重装其他 worktree 的 Kaiji；优先仅安装所缺依赖，需要隔离安装项目本体时使用独立环境。Python 的 `-s` 只禁用 user-site，不会隔离或撤销共享环境中的 editable 安装。
+- 收尾时在清除临时源码路径设置后的全新 Python 进程中，确认裸 `import kaiji` 仍指向主工作区；同时检查安装来源记录与 Git 状态，保留人的代码改动。已运行的解释器可能缓存旧模块，来源验证须使用新进程。
+
 ## 教学任务设计规范
 
 - 给用户留下代码 TODO 前，必须先在正确答案分支完整实现并运行验证；不得把尚未验证的设计作为练习题。

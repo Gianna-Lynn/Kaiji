@@ -32,12 +32,12 @@ def _finite_json(value: object) -> object:
 class SearchHit(BaseModel):
     """表示一条由 Azusa 返回并可作为证据使用的检索命中. """
 
-    chunk_id: StrictStr
-    text: StrictStr
-    score: int | float | None = None
-    source: str | None = None
-    page: StrictInt | None = None
-    metadata: dict[str, Any] = Field(default_factory=dict)
+    chunk_id: StrictStr                 # 检索命中的文本块唯一标识。
+    text: StrictStr                     # 检索命中的文本内容，可作为证据使用。
+    score: int | float | None = None    # 远端检索返回的相关性评分。
+    source: str | None = None           # 命中文本所属的来源或文档标识。
+    page: StrictInt | None = None       # 命中文本在来源文档中的页码。
+    metadata: dict[str, Any] = Field(default_factory=dict)  # 与命中关联的扩展业务元数据。
     # 远端响应的模型外壳不得悄悄携带协议外字段；metadata 本身仍允许扩展，
     # 因为它是由 Azusa 保留给业务元数据使用的 JSON 字典。
     model_config = ConfigDict(extra="forbid")
@@ -127,7 +127,15 @@ class ChunkResponse(BaseModel):
     _valid_metadata = field_validator("metadata")(_finite_json)
 
 class AzusaAdapterError(Exception):
-    """表示适配器边界内的失败, 并保留是否适合重试. """
+    """表示适配器边界内的失败, 并保留是否适合重试。
+
+    Attributes:
+        retryable: 对外统一使用的重试标记(property, 可读可写)。写入时
+            强制校验真正的 bool, 非法真值抛 TypeError; 实际值保存在
+            私有字段 ``_retryable`` 中, 不要绕过 property 直接读写。
+        args: 继承自 Exception, 保存构造时传入的错误消息; 本类没有
+            独立的 ``message`` 属性, 读取消息应使用 ``str(exc)``。
+    """
 
     def __init__(self, message: str, *, retryable: bool) -> None:
         super().__init__(message)
@@ -218,32 +226,66 @@ class _LegacyRecordResponse(BaseModel):
 
 
 class AzusaHttpAdapter:
-    """调用 Kaiji 期望的稳定 Azusa 语义 HTTP 契约. 
+    """调用 Kaiji 期望的稳定 Azusa 语义 HTTP 契约。
 
     对应的薄网关刻意位于 Kaiji 仓库之外, 并暴露
-    POST /search_azusa 与 GET /chunks/{chunk_id}. 
+    POST /search_azusa 与 GET /chunks/{chunk_id}。
+
+    Attributes:
+        _client: 构造时创建的同步 httpx.Client, 持有网关根地址、超时
+            上限与传输层; search_azusa 与 get_chunk_by_id 复用它发请求,
+            close() 释放其连接池。
     """
 
     def __init__(
         self,
-        base_url: str,  # 网关根地址, 例如 "http://127.0.0.1:38117"
+        base_url: str,
         *,
-        timeout_seconds: float = 3.0,  # 单次 HTTP 操作的等待上限(秒), 不是整个 handler 的总期限
-        transport: httpx.BaseTransport | None = None,  # 注入自定义传输层; 测试时传入 MockTransport, 否则使用默认 HTTP
+        timeout_seconds: float = 3.0,
+        transport: httpx.BaseTransport | None = None,
     ) -> None:
-        self._client = httpx.Client(  # 同步 HTTP 客户端, 内部维护连接池, 复用 TCP 连接
-            base_url=base_url.rstrip("/"),  # 去掉末尾斜杠, 避免后续拼接路径时出现 "//" 双斜杠
+        """创建并持有同步 HTTP 客户端, 供各请求方法复用。
+
+        httpx.Client 内部维护连接池, 多次请求复用同一 TCP 连接;
+        本方法只创建客户端, 不发送任何请求。
+
+        Args:
+            base_url: 网关根地址, 例如 "http://127.0.0.1:38117";
+                末尾斜杠会被去掉, 避免拼接路径时出现 "//" 双斜杠。
+            timeout_seconds: 单次 HTTP 操作的等待上限(秒), 不是整个
+                handler 的总期限。
+            transport: 自定义传输层; 测试时传入 MockTransport,
+                为 None 时 httpx 使用默认的真实 HTTP 传输。
+        """
+
+        self._client = httpx.Client(
+            base_url=base_url.rstrip("/"),
             timeout=timeout_seconds,
-            transport=transport,  # 为 None 时 httpx 使用默认的真实 HTTP 传输
+            transport=transport,
         )
 
     def search_azusa(self, query: str, k: int, mode: str) -> SearchResponse:
-        """通过语义网关搜索证据, 并把边界失败映射为重试策略. 
+        """通过语义网关检索证据, 并把边界失败映射为结构化重试策略。
 
-        TODO 7a 的输入必须原样组成 ``query/k/mode`` JSON; 成功返回值必须由
-        ``SearchResponse`` 校验. Adapter 只分类并抛出 ``AzusaAdapterError``, 
-        不在这里循环重试：timeout、network、HTTP 429/5xx、非法 JSON 和响应 Schema
-        不匹配标记为可重试; HTTP 3xx 和除 429 外的其他 4xx 标记为不可重试. 
+        TODO 7a 契约:
+        - 输入必须原样组成 ``query/k/mode`` JSON, 成功返回值必须由
+          ``SearchResponse`` 校验;
+        - 响应中的 ``mode`` 必须与请求一致, 否则视为响应自相矛盾;
+        - Adapter 只分类并抛出 ``AzusaAdapterError``, 不在本方法内循环重试;
+        - 错误分类: timeout、network、HTTP 429/5xx、非法 JSON 和响应
+          Schema 不匹配标记为可重试; HTTP 3xx 和除 429 外的其他 4xx
+          标记为不可重试。
+
+        Args:
+            query: 检索问题文本, 原样写入请求 JSON。
+            k: 期望返回的命中条数。
+            mode: 期望的检索模式, 写入请求并校验响应回显。
+
+        Returns:
+            通过 ``SearchResponse`` 校验的检索结果。
+
+        Raises:
+            AzusaAdapterError: 上述任一边界失败, 已按契约分类 retryable。
         """
         # TODO 7a：实现 POST /search_azusa、响应校验和上述完整错误分类. 
         try:
@@ -276,17 +318,29 @@ class AzusaHttpAdapter:
         except httpx.RequestError as exc:   # 请求根本没发出去, 或者发了一半断了(网线被拔了 / DNS 炸了 / 连接被拒). retryable=True: 换个时间发送, 可能成功.
             raise AzusaAdapterError(f"Azusa search returned RequestError: {str(exc)}", retryable= True) from exc
         # HTTP收到了200 OK, 但是JSON解析失败:
-        except ValueError as exc:           # 不是合法的JSON
+        except ValueError as exc:           # 响应体故障: 不是合法的JSON. 再发一次同样的请求,很可能就拿到正常响应了.
             raise AzusaAdapterError(f"Azusa search returned ValueError: {str(exc)}", retryable= True) from exc
-        except TypeError as exc:            # 字段类型不匹配
+        except TypeError as exc:            # 响应体故障: 字段类型不匹配. 再发一次同样的请求,很可能就拿到正常响应了.
             raise AzusaAdapterError(f"Azusa search returned TypeError: {str(exc)}", retryable= True) from exc
 
     def get_chunk_by_id(self, chunk_id: str) -> ChunkResponse:
-        """按稳定 ``chunk_id`` 读取完整证据, 并防止证据错配. 
+        """按稳定 chunk_id 读取完整证据正文, 并防止证据错配。
 
-        TODO 7b 必须把 ``chunk_id`` 当作单个 URL 路径段编码, 再校验
-        ``ChunkResponse``; 响应中的 ``chunk_id`` 还必须与请求值完全一致. 
-        错误分类和“不在 Adapter 内重试”的边界与 TODO 7a 相同. 
+        TODO 7b 契约:
+        - ``chunk_id`` 必须当作单个 URL 路径段编码(其中的 "/" 不得被
+          当成路径分隔符), 请求 GET /chunks/{encoded_chunk_id};
+        - 响应必须由 ``ChunkResponse`` 校验, 且响应中的 ``chunk_id``
+          必须与请求值完全一致, 否则视为证据错配;
+        - 错误分类与"不在 Adapter 内重试"的边界与 TODO 7a 相同。
+
+        Args:
+            chunk_id: 要读取的稳定证据块标识。
+
+        Returns:
+            通过 ChunkResponse 校验且 chunk_id 与请求一致的证据正文。
+
+        Raises:
+            AzusaAdapterError: 边界失败或证据错配, 已按 7a 契约分类 retryable。
         """
 
         # TODO 7b：实现 GET /chunks/{encoded_chunk_id}、响应校验和错误分类. 
@@ -705,7 +759,15 @@ class LegacyAzusaVectorHttpAdapter:
 
 
 class MockAzusaAdapter:
-    """提供无需网络、GPU 或真实 Azusa 服务的确定性检索结果. """
+    """提供无需网络、GPU 或真实 Azusa 服务的确定性检索结果.
+
+    Attributes:
+        _chunks: 以 chunk_id 为键的内存证据索引, 构造后不再变化。键保证
+            唯一——重复 chunk_id 会在构造时直接抛 ValueError, 与远端证据
+            使用相同的唯一 ID 契约; search_azusa 对全部条目做词项匹配排序,
+            get_chunk_by_id 按键直取。构造时未传入 ``chunks`` 则使用两条
+            内置教学证据。
+    """
 
     def __init__(self, chunks: list[ChunkResponse] | None = None) -> None:
         source_chunks = (
@@ -739,13 +801,35 @@ class MockAzusaAdapter:
         self._chunks = indexed_chunks
 
     def search_azusa(self, query: str, k: int, mode: str) -> SearchResponse:
-        """用简单词项匹配搜索内存中的教学证据. """
+        """把查询拆成单词,按命中词数排序内存证据,返回前 k 条。
 
+        流程: 1) query 按空白拆成小写词项集合 terms;
+        2) 每条证据按"正文中出现多少个查询词"打分并降序排列;
+        3) 取前 k 条, 丢弃一个词都没命中的条目;
+        4) 用排序位置合成演示用的相关性分数。
+
+        Args:
+            query: 检索问题, 按空白拆词; 为空时返回前 k 条全部证据。
+            k: 最多返回的命中条数。
+            mode: 原样写入响应的检索模式名, 本 Mock 不做模式过滤。
+
+        Returns:
+            携带词项命中结果与合成分数的 SearchResponse。
+        """
+
+        # terms 是"查询词项"的集合: 把 query 按空白拆成小写单词并去重,
+        # 例如 "What is HNSW?" 拆成 {"what", "is", "hnsw?"}。
         terms = set(query.lower().split())
+        # 按"正文中包含多少个查询词"给每条证据打分(命中的词越多分越高),
+        # 取负号是为了让 sorted 默认的升序变成"命中多的排前面"。
+        # 注意匹配是子串包含而非整词匹配, 例如词项 "is" 也会命中正文里的 "This"。
         ranked = sorted(
             self._chunks.values(),
             key=lambda chunk: -sum(term in chunk.text.lower() for term in terms),
         )
+        # 取前 k 条作为命中; score 是按排序位置合成的演示分数(第 1 名得
+        # len(ranked) 分、依次递减), 不是真实相关性。过滤条件: 查询为空时
+        # 全部保留, 否则丢弃一个查询词都没命中的条目。
         hits = [
             SearchHit(**chunk.model_dump(), score=float(len(ranked) - index))
             for index, chunk in enumerate(ranked[:k])

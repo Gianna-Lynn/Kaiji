@@ -20,14 +20,23 @@ class SearchAzusaArgs(BaseModel):
     # LLM传入的参数可能不可靠, 比如把数字传给字符串参数, 或者被注入攻击传入非法参数. 为此, 需要在调用前完成校验.
 
     model_config = ConfigDict(extra="forbid")
-    query: StrictStr = Field(min_length=2, description="自然语言查询内容",) # Field 是 Pydantic 用来“描述模型字段规则”的工具。它把一个普通属性变成带有默认值、校验约束和 Schema 元数据的字段. 在这里, query是字段名, StrictStr是字段类型, Field(...)是字段的额外规则和说明
-                                                                           # min_length=2 表示字符串至少两个字符. description="自然语言..." 表示给调用方或 LLM 看的语义说明.
-                                                                           # 最终生成schema, 形如:
-                                                                            #    {
-                                                                            #     "type": "string",
-                                                                            #     "minLength": 2,
-                                                                            #     "description": "自然语言查询内容"
-                                                                            #     }
+
+    # 关于下面的query字段:
+    # Field 是 Pydantic 用来“描述模型字段规则”的工具。
+    # 它把一个普通属性变成带有默认值、校验约束和 Schema 元数据的字段.
+    # 在这里, query是字段名, StrictStr是字段类型, Field(...)是字段的额外规则和说明
+    # min_length=2 表示字符串至少两个字符.
+    # description="自然语言..." 表示给调用方或 LLM 看的语义说明.
+    # 最终生成schema, 形如:
+    #    {
+    #     "type": "string",
+    #     "minLength": 2,
+    #     "description": "自然语言查询内容"
+    #     }
+    query: StrictStr = Field(
+        min_length=2,
+        description="自然语言查询内容",
+    )
     k: StrictInt = Field(default=3, ge=1, le=20)
     mode: StrictStr = Field(default="hybrid", min_length=1)
 

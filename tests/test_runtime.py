@@ -25,6 +25,17 @@ def action_for(
     percent: int = 10,
     call_id: str = "call-1",
 ) -> ModelAction:
+    """构造一个调用 calculate_discount 的工具动作。
+
+    Args:
+        tool_name: 要调用的工具名,默认 calculate_discount。
+        percent: 折扣百分比,默认 10。
+        call_id: 协议内的调用标识,默认 "call-1"。
+
+    Returns:
+        携带固定价格 100 与给定折扣的工具调用动作。
+    """
+
     return ModelAction(
         kind="tool_call",
         tool_call=ToolCall(
@@ -36,6 +47,8 @@ def action_for(
 
 
 def test_runtime_backfills_valid_result_then_finishes() -> None:
+    """成功工具结果必须回填消息历史,模型随后给出最终回答即正常完成。"""
+
     provider = ScriptedDecisionProvider(
         [
             action_for(),
@@ -50,6 +63,7 @@ def test_runtime_backfills_valid_result_then_finishes() -> None:
     assert result.answer == "The price is 90."
     assert result.successful_tool_results[0].output == {"final_price": "90"}
     assert result.messages[-1].role == "tool"
+    # messages[-2] 是携带工具调用的 assistant 消息,messages[-1] 是配对的结构化工具结果。
     assert result.messages[-2].tool_call == action_for().tool_call
     assert (
         result.messages[-1].tool_result.call_id == result.messages[-2].tool_call.call_id
@@ -63,6 +77,12 @@ def test_runtime_backfills_valid_result_then_finishes() -> None:
 
 
 def test_runtime_stops_on_tool_failure() -> None:
+    """
+    模型请求不存在的 ``missing`` 工具时,工具执行以失败结束。
+    运行时应立即停止并将停止原因标记为 ``TOOL_FAILED``;由于没有工具成功
+    产出,结果不应包含答案,失败的工具结果也不得进入成功证据列表。
+    """
+
     provider = ScriptedDecisionProvider([action_for("missing")])
     runtime = AgentRuntime(provider, ToolExecutor(build_registry()))
 
@@ -74,6 +94,8 @@ def test_runtime_stops_on_tool_failure() -> None:
 
 
 def test_runtime_has_hard_maximum_steps() -> None:
+    """循环达到 max_steps 上限即停止,即使模型还想继续调用工具。"""
+
     provider = ScriptedDecisionProvider(
         [action_for(), action_for(percent=20, call_id="call-2")]
     )
@@ -91,6 +113,8 @@ def test_runtime_has_hard_maximum_steps() -> None:
 
 
 def test_runtime_stops_repeated_identical_calls() -> None:
+    """duplicate_guard=True 时,与已执行调用完全相同(名称+参数)的调用即停止,与 call_id 无关。"""
+
     provider = ScriptedDecisionProvider([action_for(), action_for(call_id="call-2")])
     runtime = AgentRuntime(provider, ToolExecutor(build_registry()), max_steps=3)
 
@@ -101,6 +125,8 @@ def test_runtime_stops_repeated_identical_calls() -> None:
 
 
 def test_runtime_rejects_reused_tool_call_id_before_second_execution() -> None:
+    """模型复用已用过的 tool_call_id 时,第二次执行发生前即按无效响应停止。"""
+
     provider = ScriptedDecisionProvider(
         [action_for(), action_for(percent=20, call_id="call-1")]
     )
@@ -112,6 +138,7 @@ def test_runtime_rejects_reused_tool_call_id_before_second_execution() -> None:
 
     assert result.stop_reason == StopReason.MODEL_FAILED
     assert len(result.successful_tool_results) == 1
+    # 最后三条事件:第二次动作只产生 model_failure 与 stop,从未真正执行。
     assert [event.event for event in result.trace[-3:]] == [
         "model_action",
         "model_failure",
@@ -122,6 +149,8 @@ def test_runtime_rejects_reused_tool_call_id_before_second_execution() -> None:
 
 @pytest.mark.parametrize("question", ["", "   ", None, 7])
 def test_runtime_rejects_blank_or_non_string_question(question) -> None:
+    """空白或非字符串问题必须在进入循环前被拒绝。"""
+
     provider = ScriptedDecisionProvider(
         [ModelAction(kind="final_answer", final_answer="ok")]
     )
@@ -213,6 +242,8 @@ def test_runtime_rejects_truthy_safety_configuration() -> None:
     ],
 )
 def test_run_result_rejects_cross_artifact_contradictions(changes) -> None:
+    """RunResult 各字段与停止原因互相矛盾时,模型校验必须拒绝。"""
+
     result = AgentRuntime(
         ScriptedDecisionProvider(
             [
@@ -229,6 +260,8 @@ def test_run_result_rejects_cross_artifact_contradictions(changes) -> None:
 
 
 def test_core_protocol_models_reject_unknown_fields() -> None:
+    """核心协议模型必须拒绝未声明字段,不得静默丢弃。"""
+
     payload = action_for().tool_call.model_dump()
     payload["unexpected"] = "would otherwise be dropped"
     with pytest.raises(ValidationError):

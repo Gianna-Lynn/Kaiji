@@ -58,9 +58,9 @@ class ToolCall(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
-    call_id: str = Field(min_length=1)
-    name: str = Field(min_length=1)
-    arguments: dict[str, Any]
+    call_id: str = Field(min_length=1)  # 工具调用的唯一标识。
+    name: str = Field(min_length=1)     # 要执行的工具名称。
+    arguments: dict[str, Any]           # 传递给工具的参数。
 
     @field_validator("call_id", "name")
     @classmethod
@@ -97,15 +97,29 @@ class ToolResult(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
-    call_id: str = Field(min_length=1)
-    tool_name: str = Field(min_length=1)
-    ok: StrictBool
-    attempts: StrictInt = Field(ge=0)
-    output: dict[str, Any] | None = None
-    error: ToolFailure | None = None
+    call_id: str = Field(min_length=1)      # 工具调用的唯一标识。
+    tool_name: str = Field(min_length=1)    # 被调用工具的名称。
+    ok: StrictBool                          # 是否成功完成工具调用。
+    attempts: StrictInt = Field(ge=0)       # handler 实际执行的尝试次数。
+    output: dict[str, Any] | None = None    # 成功时返回的 JSON 对象结果。
+    error: ToolFailure | None = None        # 失败时保存的结构化错误信息。
 
     @model_validator(mode="after")
     def result_has_exactly_one_payload(self) -> ToolResult:
+        """校验 ok 标志、载荷互斥、尝试次数与 JSON 边界。
+
+        成功结果必须携带 output 且至少执行过一次 handler;失败结果
+        必须携带 error;发生在 handler 之前的失败(UNKNOWN_TOOL 或
+        INVALID_ARGUMENTS)尝试次数必须为 0。output 必须是有限 JSON。
+
+        Returns:
+            校验通过的原对象。
+
+        Raises:
+            ValueError: 载荷与 ok 标志矛盾、尝试次数与失败类别不符,
+                或 output 不是有限 JSON。
+        """
+
         if self.ok == (self.output is None):
             raise ValueError("a successful result needs output; a failure needs error")
         if self.ok == (self.error is not None):
@@ -169,6 +183,18 @@ class ModelAction(BaseModel):
 
     @model_validator(mode="after")
     def action_has_matching_payload(self) -> ModelAction:
+        """校验动作类别与载荷严格匹配。
+
+        tool_call 动作只能携带工具调用;final_answer 动作只能携带
+        非空最终回答,不得附带工具调用或 assistant 文本。
+
+        Returns:
+            校验通过的原对象。
+
+        Raises:
+            ValueError: 载荷与 kind 不匹配。
+        """
+
         if self.kind == "tool_call":
             if self.tool_call is None or self.final_answer is not None:
                 raise ValueError("tool_call action 只能包含工具调用")
@@ -270,6 +296,15 @@ class TraceEvent(BaseModel):
 
     @model_validator(mode="after")
     def data_is_limited_json(self) -> TraceEvent:
+        """校验事件数据必须可严格 JSON 序列化,保证 Trace 可持久化。
+
+        Returns:
+            校验通过的原对象。
+
+        Raises:
+            ValueError: data 含 NaN/Infinity 或不可序列化对象。
+        """
+
         try:
             json.dumps(self.data, allow_nan=False)
         except (ValueError, TypeError) as exc:
