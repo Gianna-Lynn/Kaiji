@@ -43,9 +43,14 @@ class AgentEvalCase(BaseModel):
 
     @field_validator("case_id", "semantic_group", "suite", "prompt", "scenario")
     @classmethod
+    # 本方法加上 @classmethod 之后, 就成为一个类方法. 
+    # 类方法适合“创建对象之前的类级别逻辑”；
+    # 实例方法适合“对象创建之后依赖具体对象状态的逻辑”。
     def text_boundaries_are_not_blank(cls, value: str) -> str:
         """身份、分组和模型提示不能只由空白组成。"""
-
+        # 这里的 cls 是类本身, 不是实例对象. 
+        # 因为这是一个类方法, 所以第一个参数是类本身, 而不是实例对象.
+        # 保留 cls 是Pydantic字段校验器的标准写法.
         if not value.strip():
             raise ValueError("Agent Eval 文本边界不得为空白")
         return value
@@ -105,6 +110,10 @@ class AgentEpisode(BaseModel):
 # 语法上：Callable[[参数类型列表], 返回类型] 表示“赋值号左边这个可调用对象的类型”；
 # 右侧的 [AgentEvalCase] 是一个参数类型列表，里面只包含一个元素, 这个元素的数据类型是AgentEvalCase.
 # 逗号后的 DecisionProvider 表示该可调用对象返回 DecisionProvider。
+
+# 这两个类型都是工厂函数的类型签名，
+# 表示它们接受一个 AgentEvalCase 对象作为参数，
+# 并返回一个 DecisionProvider 或 ToolExecutor 对象。
 ProviderFactory = Callable[[AgentEvalCase], DecisionProvider]
 ExecutorFactory = Callable[[AgentEvalCase], ToolExecutor]
 
@@ -113,8 +122,8 @@ class AgentEvalRunner:
 
     def __init__(
         self,
-        provider_factory: ProviderFactory,  # 按用例创建决策提供器。
-        executor_factory: ExecutorFactory,  # 按用例创建工具执行器。
+        provider_factory: ProviderFactory,  # provider_factory 是外部参数, 是一个符合 ProviderFactory 类型签名的可调用对象
+        executor_factory: ExecutorFactory,  # executor_factory 是外部参数, 是一个符合 ExecutorFactory 类型签名的可调用对象
         *,  
         duplicate_guard: bool = True,       # 是否启用重复调用防护。
     ) -> None:
@@ -134,16 +143,16 @@ class AgentEvalRunner:
         if type(repeat_index) is not int or repeat_index < 0:
             raise ValueError("repeat_index必须是真正的非负整数")
         start_time = perf_counter()
-        provider = self._provider_factory(case)
+        provider = self._provider_factory(case)   # 调用工厂，创建 Provider 和 Executor
         executor = self._executor_factory(case)
-        agent_runtime = AgentRuntime(
+        agent_runtime = AgentRuntime(       # 创建 AgentRuntime，传入步数上限与去重配置
             decision_provider=provider,
             executor=executor,
             max_steps=case.max_steps,
             duplicate_guard= self._duplicate_guard,
         )
-        run_result = agent_runtime.run(case.prompt)
-        agent_episode=AgentEpisode(
+        run_result = agent_runtime.run(case.prompt)     # runtime.run() 执行 AgentRuntime，传入用户提示，返回 RunResult
+        agent_episode=AgentEpisode(         # 把完整结果和运行信息包装为 AgentEpisode
             run_id=f"{case.case_id}-{repeat_index}-{uuid4().hex}",
             case_id=case.case_id,
             suite=case.suite,

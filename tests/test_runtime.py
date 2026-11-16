@@ -49,30 +49,36 @@ def action_for(
 def test_runtime_backfills_valid_result_then_finishes() -> None:
     """成功工具结果必须回填消息历史,模型随后给出最终回答即正常完成。"""
 
+    # 预设两轮决策：先计算 100 减免 10% 的价格，再返回写好的最终答案。
+    # 此 Provider 忽略消息内容，因此本测试不验证模型是否根据工具结果生成答案。
     provider = ScriptedDecisionProvider(
         [
             action_for(),
             ModelAction(kind="final_answer", final_answer="The price is 90."),
         ]
     )
-    runtime = AgentRuntime(provider, ToolExecutor(build_registry()))
+    runtime = AgentRuntime(provider, ToolExecutor(build_registry()))  # 使用真实工具执行器执行折扣计算。
 
     result = runtime.run("Calculate the price")
 
-    assert result.stop_reason == StopReason.COMPLETED
-    assert result.answer == "The price is 90."
+    assert result.stop_reason == StopReason.COMPLETED  # 收到最终答案后，应以正常完成结束。
+    assert result.answer == "The price is 90."  # 最终答案应保存在 RunResult.answer 中。
+    # 成功结果列表应保留计算输出；Decimal 在 JSON 模式下序列化为字符串 "90"。
     assert result.successful_tool_results[0].output == {"final_price": "90"}
+    # 当前实现没有追加最终回答消息，所以最后一条消息仍应是工具结果。
     assert result.messages[-1].role == "tool"
-    # messages[-2] 是携带工具调用的 assistant 消息,messages[-1] 是配对的结构化工具结果。
+    # 倒数第二条消息应保留预期的工具调用；这里比较模型字段值，不是对象身份。
     assert result.messages[-2].tool_call == action_for().tool_call
+    # 工具结果与调用请求的 call_id 必须相同，防止结果被回填到错误的调用上。
     assert (
         result.messages[-1].tool_result.call_id == result.messages[-2].tool_call.call_id
     )
+    # 提取事件名称，检查顺序及数量：两轮决策、一次工具执行，最后正常停止。
     assert [event.event for event in result.trace] == [
-        "model_action",
-        "tool_result",
-        "model_action",
-        "stop",
+        "model_action",  # 第 1 轮：Provider 请求调用工具。
+        "tool_result",   # 第 1 轮：Executor 返回工具结果。
+        "model_action",  # 第 2 轮：Provider 给出最终答案。
+        "stop",          # Runtime 记录停止事件。
     ]
 
 
@@ -85,7 +91,7 @@ def test_runtime_stops_on_tool_failure() -> None:
 
     provider = ScriptedDecisionProvider([action_for("missing")])
     runtime = AgentRuntime(provider, ToolExecutor(build_registry()))
-
+    # 触发失败: build_registry() 没有注册名字为"missing"的工具.
     result = runtime.run("Use a missing tool")
 
     assert result.stop_reason == StopReason.TOOL_FAILED
@@ -97,7 +103,8 @@ def test_runtime_has_hard_maximum_steps() -> None:
     """循环达到 max_steps 上限即停止,即使模型还想继续调用工具。"""
 
     provider = ScriptedDecisionProvider(
-        [action_for(), action_for(percent=20, call_id="call-2")]
+        [action_for(), action_for(percent=20, call_id="call-2")]   
+        # Runtime最多做两轮决策,两轮都是调用工具,第二轮的时候循环耗尽
     )
     runtime = AgentRuntime(
         provider,
@@ -116,6 +123,7 @@ def test_runtime_stops_repeated_identical_calls() -> None:
     """duplicate_guard=True 时,与已执行调用完全相同(名称+参数)的调用即停止,与 call_id 无关。"""
 
     provider = ScriptedDecisionProvider([action_for(), action_for(call_id="call-2")])
+    # 第二轮动作与第一轮完全相同,但 call_id 不同,仍应被 duplicate_guard 检测到重复。
     runtime = AgentRuntime(provider, ToolExecutor(build_registry()), max_steps=3)
 
     result = runtime.run("Repeat forever")

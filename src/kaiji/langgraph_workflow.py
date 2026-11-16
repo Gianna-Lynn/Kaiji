@@ -214,6 +214,32 @@ def build_agent_graph(
             "stop_reason": StopReason.MAX_STEPS.value,
         }
 
+    # 图的结构如下；方括号内是节点名，括号内是选择下一条边的条件。
+    #
+    # START -> [router]
+    #              |
+    #              +-- (普通问题) -> [search]
+    #              |                    |
+    #              |                    +-- (有证据) ---------> [answer] ----> END
+    #              |                    +-- (无证据且达到上限) -> [max_steps] -> END
+    #              |                    +-- (可恢复且未改写) --> [rewrite] --+
+    #              |                    |                                   |
+    #              |                    |    [search] <---------------------+
+    #              |                    +-- (其余无证据情况) --> [failure] ---> END
+    #              |
+    #              +-- (含 delete/send/publish) -> [confirm]
+    #                                                 |
+    #                                   interrupt 暂停，等待人工决定
+    #                                   同一 thread_id 提交恢复值
+    #                                                 |
+    #                                                 +-- (True) -> [approved] -> END
+    #                                                 +-- (False) -> [rejected] -> END
+    #
+    # search 后按 assess_search 的顺序判断：有证据优先，其次检查检索次数上限，
+    # 再判断是否可恢复且 retry_count < 1。rewrite 最多一次，随后回到同一个 search。
+    # 图中的两个 [search] 表示同一个节点；step_count 只统计该节点的检索尝试次数。
+    # 审批恢复值必须是真正的 bool；非法类型会抛异常，不会按拒绝处理。
+    # approved 只生成模拟获批结果，不执行真实发送、删除或发布操作。
     graph = StateGraph(AgentState)
     graph.add_node("router", route_request)
     graph.add_node("search", lambda state: _search(adapter, state))

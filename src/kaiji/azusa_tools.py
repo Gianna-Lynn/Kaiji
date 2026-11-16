@@ -63,32 +63,32 @@ class GetChunkArgs(BaseModel):
 
 
 def build_azusa_registry(adapter: AzusaAdapter, *, tool_timeout_seconds: float = 4.0) -> ToolRegistry:
-    """
-    TODO 7d
+    """构建只包含检索与证据读取工具的 Azusa 注册表。
 
-    背景:
-    LLM 只能通过 ToolRegistry 中注册的工具调用 Adapter; 参数进 handler 前要经过
-    Pydantic 参数模型校验, 防止类型错乱或注入攻击传入非法参数.
-    本函数把 Adapter 的两个稳定方法包装成两个工具, 注册进同一个 registry.
+    TODO 7d: 注册 ``search_azusa`` 与 ``get_chunk_by_id`` 两个工具，
+    参数/结果模型分别为 ``SearchAzusaArgs`` / ``SearchResponse`` 和
+    ``GetChunkArgs`` / ``ChunkResponse``；
+    两者共用 ``tool_timeout_seconds``作为单次执行等待上限，
+    ``max_retries`` 均为 1。
 
-    函数功能:
-    build_azusa_registry 接收一个 Adapter, 返回注册好两个工具的 ToolRegistry.
-    它负责定义两个 handler、构造两个 ToolDefinition 并完成注册.
+    本函数只负责组装注册表，不调用 Adapter，也不发 HTTP 请求。
+    handler每次只调用一次对应的 Adapter 方法，把响应转成 JSON 兼容字典；
+    Adapter 报错统一转为 ``ToolExecutionError``，并保留 ``retryable``
+    标记。参数校验、是否重试和超时控制都由 ToolExecutor 在真正执行
+    工具时完成，本函数不参与。
 
-    具体说明:
-    TODO 7d 必须注册且只注册 ``search_azusa`` 与 ``get_chunk_by_id``: 参数模型
-    分别为 ``SearchAzusaArgs``、``GetChunkArgs``, 结果模型分别为
-    ``SearchResponse``、``ChunkResponse``, 两者的 ``max_retries`` 都是 1.
+    Args:
+        adapter: 提供 search_azusa 和 get_chunk_by_id 方法的适配器。
+        tool_timeout_seconds: 单次工具执行尝试的等待上限（秒），默认
+            4.0。只接受有限正数 int 或 float，不接受 bool；它不是
+            Adapter 的 HTTP 超时设置，也不保证超时能中断已开始的 handler。
 
-    handler 接收 Executor 已用参数模型校验过的 ``BaseModel``, 仍应通过
-    ``SearchAzusaArgs.model_validate(arguments)`` 恢复明确类型——这一步会填上
-    默认值(k=3, mode="hybrid"), 并把默认值和显式值原样、恰好一次地传给 Adapter.
-    Adapter 返回 Pydantic 对象, handler 返回 JSON 兼容字典(model_dump(mode="json"));
-    若 Adapter 抛出 ``AzusaAdapterError``, 必须转成 ``ToolExecutionError`` 并原样
-    传播 ``retryable``.
+    Returns:
+        仅注册上述两个工具的 ToolRegistry。
 
-    参数校验失败发生在 handler 之前(Executor 阶段), 此时 Adapter 不应被调用,
-    ``attempts`` 也应保持为 0; 真正的有限重试只由 ``ToolExecutor`` 执行。
+    Raises:
+        TypeError: tool_timeout_seconds 不是 int 或 float，或传入了 bool。
+        ValueError: tool_timeout_seconds 非有限或不大于零。
     """
 
     if type(tool_timeout_seconds) is not float and type(tool_timeout_seconds) is not int:

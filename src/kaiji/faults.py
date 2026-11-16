@@ -18,6 +18,10 @@ class ToolFaultStep(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
+    # transient: 抛出可重试的 ToolExecutionError
+    # permanent: 抛出不可重试的 ToolExecutionError
+    # invalid_result: 返回用来触发输出校验失败的数据
+    # delay: 等待指定秒数，再返回输出
     kind: Literal["success", "transient", "permanent", "invalid_result", "delay"]
     output: dict[str, Any] | None = None
     delay_seconds: float = Field(default=0.0, ge=0)
@@ -49,13 +53,23 @@ class ScriptedToolHandler:
         if step.kind == "delay":
             sleep(step.delay_seconds)
         return deepcopy(step.output or {})
+    # 调用方法形如:
+    # handler = ScriptedToolHandler([
+    #     ToolFaultStep(kind="transient"),
+    #     ToolFaultStep(kind="success", output={"final_price": "90"}),
+    # ])
 
 
 class HttpFaultStep(BaseModel):
     """描述一次 MockTransport 请求的响应或网络故障。"""
 
     model_config = ConfigDict(extra="forbid")
-
+    
+    # kind 行为：
+    # json：返回指定状态码和 JSON 数据
+    # status：返回指定状态码和 JSON 数据，常用来模拟 429、503 等
+    # network：抛出连接异常
+    # invalid_json：返回无法解析成 JSON 的正文
     kind: Literal["json", "status", "network", "invalid_json"]
     status_code: int = Field(default=200, ge=100, le=599)
     payload: Any = None
@@ -69,12 +83,14 @@ class ScriptedHttpTransport:
             raise ValueError("HTTP 故障序列不能为空")
         self._steps = deque(deepcopy(steps))
         self.attempts = 0
+        # HTTP请求会交给 self._handle 方法处理, 不访问真实的服务.
+        # 该方法会根据故障步骤返回响应或抛出异常.
         self.transport = httpx.MockTransport(self._handle)
 
     def _handle(self, request: httpx.Request) -> httpx.Response:
         """消费一步并返回响应；网络故障保留原请求对象。"""
 
-        self.attempts += 1
+        self.attempts += 1  # 统计 HTTP请求次数
         if not self._steps:
             raise AssertionError("HTTP 故障序列已耗尽")
         step = self._steps.popleft()
