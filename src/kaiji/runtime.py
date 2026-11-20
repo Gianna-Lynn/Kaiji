@@ -80,8 +80,19 @@ class AgentRuntime:
     def run(self, question: str) -> RunResult:
         """运行一次问题处理流程,直到模型回答或触发明确停止。
 
-        处理流程:校验入参并初始化状态 → 循环内询问 Provider →
-        执行模型动作(最终回答或工具调用)→ 以明确的停止原因返回。
+        run(question)
+        +-- 入参无效 -> 抛出 ValueError
+        `-- 初始化消息、Trace 和成功结果
+            +-- 还有步数 -> Provider 决策（每轮一步）
+            |   +-- 失败或异常 -> model_failed
+            |   +-- 最终回答 -> completed
+            |   `-- 工具调用（按顺序检查）
+            |       +-- call_id 已使用 -> model_failed
+            |       +-- 判重开启且工具名和参数重复 -> duplicate_call
+            |       `-- Executor 执行，回填消息和 Trace
+            |           +-- 失败 -> tool_failed
+            |           `-- 成功 -> 保存结果，回到步数检查
+            `-- 步数用尽 -> max_steps
 
         Args:
             question: 用户的初始问题,必须为非空字符串。

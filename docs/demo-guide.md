@@ -87,6 +87,7 @@ try {
 
 ## 预期结果
 
+- 原生 Demo 默认按步展示工具请求、工具执行和最终回答。运行 `python -m kaiji.demo --json` 可查看完整的消息、Trace 和模型调用记录。
 - 折扣：90、completed、2 步、1 次工具执行；最终答案位于 RunResult.answer，不追加最终 assistant 消息。
 - SQLite：新 Saver/Graph 和相同 thread_id 恢复待审批状态，批准后 completed。
 - Formal Preflight：120 与 60 条独立矩阵完成，真实请求数为 0；故障组中的伪引用应被评分器识别。
